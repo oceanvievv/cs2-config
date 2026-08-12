@@ -157,7 +157,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$TOOL_VERSION = '1.1.1'
+$TOOL_VERSION = '1.2.0'
 $TOOL_URL     = 'https://github.com/oceanvievv/cs2-config'
 
 # The Windows display language decides, and nothing else. Keyboard layouts are
@@ -353,10 +353,6 @@ $ValueFlags = @('-threads', '-w', '-width', '-h', '-height', '-refresh', '-freq'
 $NotPortable = @{
     '-threads'                     = 'thread count is specific to this CPU'
     '-high'                        = 'high priority can starve audio and input on a faster CPU'
-    '-w'                           = 'resolution differs on another monitor'
-    '-width'                       = 'resolution differs on another monitor'
-    '-h'                           = 'resolution differs on another monitor'
-    '-height'                      = 'resolution differs on another monitor'
     '-refresh'                     = 'refresh rate differs on another monitor'
     '-freq'                        = 'refresh rate differs on another monitor'
     '-softparticlesdefaultoff'     = 'lowers quality to gain fps you may not need'
@@ -372,10 +368,6 @@ $NotPortable = @{
 $NotPortableRu = @{
     '-threads'                     = 'число потоков подобрано под этот процессор'
     '-high'                        = 'высокий приоритет на быстром процессоре мешает звуку и вводу'
-    '-w'                           = 'на другом мониторе другое разрешение'
-    '-width'                       = 'на другом мониторе другое разрешение'
-    '-h'                           = 'на другом мониторе другое разрешение'
-    '-height'                      = 'на другом мониторе другое разрешение'
     '-refresh'                     = 'на другом мониторе другая частота обновления'
     '-freq'                        = 'на другом мониторе другая частота обновления'
     '-softparticlesdefaultoff'     = 'жертвует качеством ради кадров, которых там хватит'
@@ -840,18 +832,26 @@ if ($launch) { $launchPortable = $launch.Portable }
 # A video config records the GPU it came from - VendorID, DeviceID, knowndevice - and on
 # other hardware CS2 decides the file is not its own, re-detects and rewrites it, taking
 # the resolution with it. -w/-h are read before any of that happens and do not care what
-# card is in the machine, so the resolution rides in the launch options instead.
-if ($videoPath) {
+# card is in the machine, which is why they are not in $NotPortable: on a foreign PC they
+# are the only thing that holds the resolution. Added here when Steam has none set.
+if ($videoPath -and ($launchPortable -notmatch '(^|\s)-(w|width|h|height)(\s|$)')) {
     $vset = Read-VdfPairs $videoPath
     $vw = $vset['setting.defaultres']
     $vh = $vset['setting.defaultresheight']
-    if ($vw -and $vh -and ($launchPortable -notmatch '(^|\s)-[wh](\s|$)')) {
+    if ($vw -and $vh) {
         $res = "-w $vw -h $vh"
         if ($vset['setting.fullscreen'] -eq '1') { $res += ' -fullscreen' }
         $launchPortable = ("$launchPortable $res").Trim()
         Ok "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, added to the launch options" `
            "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, добавлено в параметры запуска"
     }
+}
+
+# CS2 is supposed to run autoexec.cfg by itself, and mostly does. Everything in a pack
+# hangs off that one file, so on a PC you get for an hour it is worth not depending on
+# "mostly": +exec autoexec costs nothing and runs it a second time at worst.
+if ($launchPortable -notmatch '(?i)(^|\s)\+exec\s+autoexec(\s|$)') {
+    $launchPortable = ("$launchPortable +exec autoexec").Trim()
 }
 
 $restoreConsts =
@@ -1614,11 +1614,17 @@ Head '=== done ===================================================' `
 Write-Host ''
 Info "Pack written to: $OutDir" "Набор собран здесь: $OutDir"
 Write-Host ''
-# Just the string worth pasting. The per-flag reasoning lives in the pack README,
-# which is where someone actually goes looking for it.
+# Just the string worth pasting. The per-flag reasoning lives in the pack README, which
+# is where someone actually goes looking for it. Said as "on the other PC" because that
+# is where it matters: on this one they are already set, and this line is the trimmed
+# version, so pasting it here would quietly drop flags.
 if ($launchPortable -ne '') {
-    Write-Host (L 'Launch options you can try:' 'Параметры запуска, которые можно поставить:') -ForegroundColor White
+    Write-Host (L 'Set these on the other PC (Steam > CS2 > Properties > General):' `
+                  'Поставь их на другом ПК (Steam > CS2 > «Свойства» > «Общие»):') -ForegroundColor White
     Write-Host $launchPortable -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host (L 'The resolution is in there because a video config does not survive another GPU.' `
+                  'Разрешение тут потому, что настройки видео не переживают другую видеокарту.') -ForegroundColor DarkGray
     Write-Host ''
 }
 Write-Host (L 'Next:' 'Дальше:') -ForegroundColor White
