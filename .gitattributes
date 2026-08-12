@@ -1,0 +1,4 @@
+# cmd.exe misparses batch files with LF-only line endings, so force CRLF on checkout.
+# Without this a clone could produce a setup.cmd that fails on its own labels.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
