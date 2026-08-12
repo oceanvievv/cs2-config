@@ -157,7 +157,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$TOOL_VERSION = '1.1.0'
+$TOOL_VERSION = '1.1.1'
 $TOOL_URL     = 'https://github.com/oceanvievv/cs2-config'
 
 # The Windows display language decides, and nothing else. Keyboard layouts are
@@ -1401,6 +1401,13 @@ if ($consoleLeft.Count -gt 0) {
 $downloadUrl = 'https://github.com/<you>/<repo>/blob/main/apply-config.cmd'
 if ($RepoUrl) {
     $downloadUrl = $RepoUrl.TrimEnd('/') + '/blob/main/apply-config.cmd'
+} elseif (Test-Path (Join-Path $OutDir 'README.md')) {
+    # update-config.cmd knows nothing about where the pack was published, so without this
+    # every rebuild by hand would put the placeholders back into a README that already had
+    # a working link. Recover it from the README standing here.
+    $prev = [regex]::Match([IO.File]::ReadAllText((Join-Path $OutDir 'README.md')),
+                           'https://github\.com/[^\s)]+/blob/main/apply-config\.cmd')
+    if ($prev.Success -and $prev.Value -notmatch '[<>]') { $downloadUrl = $prev.Value }
 }
 
 # PadRight alone is not enough: cs2_user_convars_0_slot0.vcfg is longer than the column,
