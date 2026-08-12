@@ -11,6 +11,7 @@ A tool for creating, saving and installing your CS2 config.
 - Launch options
 - Video settings
 - A copy of the cloud settings (sensitivity, crosshair, binds and so on)
+- The settings tied to the PC (radar, fov, volumes and so on)
 
 ## Building the config on your PC
 
@@ -27,6 +28,7 @@ cs2-config\
    
    cfg\ // Game configs
    video\ // Screen resolution, refresh rate, picture quality and so on
+   machine\ // What Steam Cloud does not carry: radar, fov, volumes, HUD scale and so on
    cloud-backup\ // A copy of what Steam Cloud normally holds: mouse sensitivity, crosshair, binds and so on
    
    README.md // Instructions

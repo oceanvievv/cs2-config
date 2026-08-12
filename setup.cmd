@@ -157,7 +157,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$TOOL_VERSION = '1.0.0'
+$TOOL_VERSION = '1.1.0'
 $TOOL_URL     = 'https://github.com/oceanvievv/cs2-config'
 
 # The Windows display language decides, and nothing else. Keyboard layouts are
@@ -407,6 +407,59 @@ function Split-LaunchOptions($raw) {
     return $items
 }
 
+# cs2_machine_convars.vcfg is not carried by Steam Cloud - the name is literal, these
+# belong to the machine - so on another PC they are that machine's defaults. The radar
+# lives here, and so do fov, every volume, HUD scale and gamma.
+#
+# An allowlist rather than a denylist, because a pack gets published: the same file holds
+# "password", the direct-challenge key, cached ids and saved map lists. Anything Valve adds
+# later stays out until someone puts it in, which is the right way round for a file that
+# ends up in a public repository.
+$MachineKeep = @(
+    'cl_radar_', 'cl_hud_radar_', 'cl_hud_telemetry_', 'cl_teamid_overhead_',
+    'cl_radial_', 'cl_quickinventory_', 'cl_scoreboard_', 'cl_predict_',
+    'snd_', 'voice_', 'spec_', 'r_'
+)
+$MachineKeepExact = @(
+    'cl_hud_color', 'hud_scaling', 'hud_fastswitch', 'safezonex', 'safezoney',
+    'cl_teammate_colors_show', 'cl_force_spec_hud_color_to_team',
+    'cl_crosshair_friendly_warning', 'cl_show_observer_crosshair',
+    'cl_observed_bot_crosshair', 'cl_deathcampanel_position_dynamic',
+    'cl_sniper_show_inaccuracy', 'cl_sniper_delay_unscope',
+    'cl_show_clan_in_death_notice', 'cl_weapon_selection_rarity_color',
+    'cl_use_last_selected_weapon_slot_position', 'cl_color', 'cl_autohelp',
+    'cl_mute_enemy_team', 'cl_mute_all_but_friends_and_party', 'cl_enable_party_voice',
+    'cl_net_buffer_ticks', 'cl_timeout', 'cl_player_ping_mute',
+    'cl_ping_fade_deadzone', 'cl_ping_fade_distance', 'cl_versus_intro',
+    'cl_disable_round_end_report', 'cl_dm_buyrandomweapons', 'cl_hide_avatar_images',
+    'cl_allow_animated_avatars', 'cl_sanitize_player_names', 'mouse_inverty',
+    'fov_desired', 'viewmodel_presetpos', 'rate', 'volume', 'dsp_volume',
+    'fps_max', 'fps_max_ui', 'speaker_config', 'closecaption', 'sv_voiceenable',
+    'mapoverview_icon_scale', 'csgo_map_preview_scale'
+)
+# Beats both lists above, in case a prefix ever grows into something it should not reach.
+$MachineNever = @('password', 'ui_playsettings_directchallengekey')
+
+# Filtered line by line rather than parsed and written back out, so what survives keeps
+# the exact bytes CS2 wrote. Split-screen convars carry a $1..$4 suffix that is not part
+# of the name.
+function Select-MachineConvars($path) {
+    $out  = New-Object System.Text.StringBuilder
+    $kept = 0
+    foreach ($line in (Get-Content $path)) {
+        $m = [regex]::Match($line, '^\s*"([^"]+)"\s+"')
+        if (-not $m.Success) { [void]$out.AppendLine($line); continue }
+        $name = $m.Groups[1].Value
+        $base = $name -replace '\$\d+$', ''
+        if ($MachineNever -contains $base) { continue }
+        $keep = $false
+        foreach ($p in $MachineKeep) { if ($name.StartsWith($p)) { $keep = $true; break } }
+        if (-not $keep -and ($MachineKeepExact -contains $base)) { $keep = $true }
+        if ($keep) { [void]$out.AppendLine($line); $kept++ }
+    }
+    return [pscustomobject]@{ Text = $out.ToString(); Count = $kept }
+}
+
 function Get-PortableLaunchOptions($raw) {
     $kept    = New-Object System.Collections.Generic.List[string]
     $dropped = New-Object System.Collections.Generic.List[object]
@@ -460,13 +513,16 @@ if ($accountId) {
 $convarsPath = $null
 $keysPath    = $null
 $videoPath   = $null
+$machinePath = $null
 if ($userCfgDir -and (Test-Path $userCfgDir)) {
     $c = Join-Path $userCfgDir 'cs2_user_convars_0_slot0.vcfg'
     $k = Join-Path $userCfgDir 'cs2_user_keys_0_slot0.vcfg'
     $v = Join-Path $userCfgDir 'cs2_video.txt'
+    $m = Join-Path $userCfgDir 'cs2_machine_convars.vcfg'
     if (Test-Path $c) { $convarsPath = $c }
     if (Test-Path $k) { $keysPath    = $k }
     if (Test-Path $v) { $videoPath   = $v }
+    if (Test-Path $m) { $machinePath = $m }
 }
 
 $convars = Read-VdfPairs $convarsPath
@@ -646,7 +702,7 @@ if ($launchRaw) {
 
 Head '--- building pack ---' '--- собираю набор ---'
 
-foreach ($sub in @('cfg', 'video', 'cloud-backup')) {
+foreach ($sub in @('cfg', 'video', 'cloud-backup', 'machine')) {
     $p = Join-Path $OutDir $sub
     if (Test-Path $p) { Remove-Item $p -Recurse -Force }
     New-Item -ItemType Directory -Force $p | Out-Null
@@ -723,6 +779,14 @@ foreach ($p in @($convarsPath, $keysPath)) {
     }
     $cloudFiles += (Split-Path -Leaf $p)
 }
+$machineCount = 0
+if ($machinePath) {
+    $sel = Select-MachineConvars $machinePath
+    if ($sel.Count -gt 0) {
+        [IO.File]::WriteAllText((Join-Path (Join-Path $OutDir 'machine') 'cs2_machine_convars.vcfg'), $sel.Text, $UTF8)
+        $machineCount = $sel.Count
+    }
+}
 if ($Anonymize) {
     Ok "$(Lbl 'Anonymized' 'Обезличено')in-game name stripped" `
        "$(Lbl 'Anonymized' 'Обезличено')игровой ник убран"
@@ -731,6 +795,10 @@ if ($Anonymize) {
 $packedCfgs = @(Get-ChildItem $packCfg -Filter *.cfg | Sort-Object Name)
 Ok "$(Lbl 'cfg/' 'cfg/')$($packedCfgs.Count) files" "$(Lbl 'cfg/' 'cfg/')файлов: $($packedCfgs.Count)"
 if ($hasVideo)         { Ok "$(Lbl 'video/' 'video/')cs2_video.txt" }
+if ($machineCount -gt 0) {
+    Ok "$(Lbl 'machine/' 'machine/')$machineCount convars Steam Cloud does not carry" `
+       "$(Lbl 'machine/' 'machine/')переменных, которые не возит Steam Cloud: $machineCount"
+}
 if ($cloudFiles.Count) {
     Ok "$(Lbl 'cloud-backup/' 'cloud-backup/')$($cloudFiles.Count) files" `
        "$(Lbl 'cloud-backup/' 'cloud-backup/')файлов: $($cloudFiles.Count)"
@@ -762,11 +830,29 @@ function Emit-Map($varName, $dir, $filter) {
 }
 
 $payload  = Emit-Map 'GameCfg'  $packCfg                               '*.cfg'
-$payload += Emit-Map 'VideoCfg' (Join-Path $OutDir 'video')            '*.txt'
-$payload += Emit-Map 'CloudCfg' (Join-Path $OutDir 'cloud-backup')     '*.vcfg'
+$payload += Emit-Map 'VideoCfg'   (Join-Path $OutDir 'video')          '*.txt'
+$payload += Emit-Map 'CloudCfg'   (Join-Path $OutDir 'cloud-backup')   '*.vcfg'
+$payload += Emit-Map 'MachineCfg' (Join-Path $OutDir 'machine')        '*.vcfg'
 
 $launchPortable = ''
 if ($launch) { $launchPortable = $launch.Portable }
+
+# A video config records the GPU it came from - VendorID, DeviceID, knowndevice - and on
+# other hardware CS2 decides the file is not its own, re-detects and rewrites it, taking
+# the resolution with it. -w/-h are read before any of that happens and do not care what
+# card is in the machine, so the resolution rides in the launch options instead.
+if ($videoPath) {
+    $vset = Read-VdfPairs $videoPath
+    $vw = $vset['setting.defaultres']
+    $vh = $vset['setting.defaultresheight']
+    if ($vw -and $vh -and ($launchPortable -notmatch '(^|\s)-[wh](\s|$)')) {
+        $res = "-w $vw -h $vh"
+        if ($vset['setting.fullscreen'] -eq '1') { $res += ' -fullscreen' }
+        $launchPortable = ("$launchPortable $res").Trim()
+        Ok "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, added to the launch options" `
+           "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, добавлено в параметры запуска"
+    }
+}
 
 $restoreConsts =
     "`$PackName      = '$($Name -replace "'", "''")'`r`n" +
@@ -947,7 +1033,9 @@ if (-not ($Video -or $Convars -or $Check -or $Undo)) {
     Write-Host ''
     $pick = Read-Host (L '  Choose 1-4, or just press Enter for 1' `
                          '  Выбери 1-4 или просто нажми Enter для 1')
-    switch ($pick.Trim()) {
+    # "$pick", not $pick: with no console to read from, Read-Host hands back null, and
+    # calling .Trim() on that would end the run with a stack trace instead of a default.
+    switch ("$pick".Trim()) {
         '2'     { }
         '3'     { $Check = $true }
         '4'     { $Undo  = $true }
@@ -977,7 +1065,7 @@ if ($Undo) {
     Write-Host ''
     Write-Host (L "Restoring the files this PC had before, from $($last.Name)" `
                   "Возвращаю файлы, которые были на этом ПК, из копии $($last.Name)")
-    $map = @{ 'cfg' = $cfgDir; 'video' = $userCfg; 'cloud' = $userCfg }
+    $map = @{ 'cfg' = $cfgDir; 'video' = $userCfg; 'cloud' = $userCfg; 'machine' = $userCfg }
     foreach ($tag in $map.Keys) {
         $dir = Join-Path $last.FullName $tag
         if (-not (Test-Path $dir) -or -not $map[$tag]) { continue }
@@ -1007,8 +1095,9 @@ if ($Check) {
                   'Сравниваю набор с тем, что на ПК (ничего не записывается):')
     Compare-Payload $GameCfg  $cfgDir  'cfg'
     if ($userCfg) {
-        Compare-Payload $VideoCfg $userCfg 'video'
-        Compare-Payload $CloudCfg $userCfg 'cloud'
+        Compare-Payload $VideoCfg   $userCfg 'video'
+        Compare-Payload $MachineCfg $userCfg 'machine'
+        Compare-Payload $CloudCfg   $userCfg 'cloud'
     }
     Write-Host ''
     Info 'Run without -Check to apply.' 'Запусти без -Check, чтобы применить.'
@@ -1022,6 +1111,19 @@ Write-Payload $GameCfg $cfgDir 'cfg'
 Ok 'Configs in place. Crosshair included, no share code needed.' `
    'Конфиги на месте. Прицел внутри, код обмена не нужен.'
 
+# Radar, fov, volumes, HUD scale. Steam Cloud does not carry these, so on any PC but the
+# one they came from they are that machine's defaults unless this writes them. Applied
+# with the configs rather than behind -Convars: nothing here belongs to Steam, so nothing
+# overwrites it on the way out - only CS2 itself does, which is why it has to be closed.
+if ($userCfg -and $MachineCfg.Count -gt 0) {
+    Write-Host ''
+    Write-Host (L 'Writing the settings Steam Cloud does not carry:' `
+                  'Пишу настройки, которые не возит Steam Cloud:')
+    Write-Payload $MachineCfg $userCfg 'machine'
+    Warn 'CS2 must be closed for these: it rewrites this file when it exits.' `
+         'Для них CS2 должна быть закрыта: при выходе она перезаписывает этот файл.'
+}
+
 if ($Video) {
     if (-not $userCfg) { Warn 'No CS2 userdata folder. Log into Steam, run CS2 once, retry.' `
                               'Нет папки userdata для CS2. Войди в Steam, запусти игру один раз и повтори.' }
@@ -1031,8 +1133,8 @@ if ($Video) {
         Write-Host ''
         Write-Host (L 'Writing video settings:' 'Пишу настройки видео:')
         Write-Payload $VideoCfg $userCfg 'video'
-        Warn 'Check the resolution in game: CS2 may re-detect the GPU and override some of it.' `
-             'Проверь разрешение в игре: CS2 может заново определить видеокарту и часть настроек переписать.'
+        Warn 'On a different GPU, CS2 re-detects and overrides some of this. The resolution is in the launch options for that reason.' `
+             'На другой видеокарте CS2 определит её заново и часть этого перепишет. Поэтому разрешение продублировано в параметрах запуска.'
     }
 } else {
     Info ''
@@ -1324,6 +1426,10 @@ foreach ($f in $packedCfgs) {
 if ($hasVideo) {
     $fileLinesEn.Add((Col 'video\cs2_video.txt' 'Resolution and quality'))
     $fileLinesRu.Add((Col 'video\cs2_video.txt' 'Разрешение и качество картинки'))
+}
+if ($machineCount -gt 0) {
+    $fileLinesEn.Add((Col 'machine\cs2_machine_convars.vcfg' 'Radar, fov, volumes: what Steam Cloud does not carry'))
+    $fileLinesRu.Add((Col 'machine\cs2_machine_convars.vcfg' 'Радар, fov, громкости: то, что не возит Steam Cloud'))
 }
 foreach ($c in $cloudFiles) {
     $fileLinesEn.Add((Col "cloud-backup\$c" 'What Steam Cloud normally brings'))
