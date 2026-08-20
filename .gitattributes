@@ -1,4 +1,4 @@
-# cmd.exe misparses batch files with LF-only line endings, so force CRLF on checkout.
-# Without this a clone could produce a setup.cmd that fails on its own labels.
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# apply-config.cmd is downloaded raw by the one-line install, so what is stored here is
+# what runs. cmd.exe misparses a batch file with LF-only line endings, and git would
+# normalise them away on commit without this line.
+*.cmd -text

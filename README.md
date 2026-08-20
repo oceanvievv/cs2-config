@@ -1,71 +1,70 @@
-# cs2-config
+# CS2 config
 
-A tool for creating, saving and installing your CS2 config.
-
-[Русская версия](README.ru.md)
-
-#### Which settings are covered
-
-- Game configs (autoexec, your own ones)
-- Crosshair
-- Launch options
-- Video settings
-- A copy of the cloud settings (sensitivity, crosshair, binds and so on)
-- The settings tied to the PC (radar, fov, volumes and so on)
-
-## Building the config on your PC
-
-[Download the installer](https://github.com/oceanvievv/cs2-config/releases/latest/download/setup.cmd)
-and run it. It creates the config folder **next to wherever you ran it from**:
-
-```
-cs2-config\
-   apply-config.cmd // Applies your settings
-   apply-config-using-console.txt // Fallback through the CS2 console, when the script cannot run
-   
-   update-config.cmd // Updates your settings
-   .gitattributes // Housekeeping: without it a downloaded apply-config.cmd will not run
-   
-   cfg\ // Game configs
-   video\ // Screen resolution, refresh rate, picture quality and so on
-   machine\ // What Steam Cloud does not carry: radar, fov, volumes, HUD scale and so on
-   cloud-backup\ // A copy of what Steam Cloud normally holds: mouse sensitivity, crosshair, binds and so on
-   
-   README.md // Instructions
-   README.ru.md // Instructions in Russian
-```
-
-Carry the folder on a USB stick, or [put it on GitHub](#the-config-in-the-cloud) to install the config on another
-PC with one command.
-
-## Updating the config
-
-To update the config after changing your settings in the game, run `update-config.cmd`.
-
-If the config is already on GitHub, upload the folder again the same way —
-see [Updating the config in the cloud](#updating-the-config-in-the-cloud).
+Packed by [cs2-config](https://github.com/oceanvievv/cs2-config).
 
 ## Installing the config on another PC
 
-Two ways, depending on how you keep the config:
+Any one of these three. Take the first that works on that PC — they are alternatives, not
+steps.
 
-1. [The config in the cloud](#the-config-in-the-cloud). Open your repository and use the link from its README to download the file that applies the config
+#### Installation file
+Download [apply-config.cmd](https://github.com/oceanvievv/cs2-config-oceanvievv/blob/main/apply-config.cmd) and launch it.
 
-2. The config folder on a USB stick: carry it to the other PC and run `apply-config.cmd`
+#### Copy configs manually
+Copy the files from `cfg\` into:
 
-   > If the script will not run, paste the contents of `apply-config-using-console.txt` into the CS2 console. Only your basic configs and the crosshair are applied.
+```
+...\steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg\
+```
 
-## The config in the cloud
+Then restart CS2. `autoexec.cfg` runs on startup and pulls in the rest. If the game is
+already open, `exec autoexec` in the console does the same thing once.
 
-### Putting the config in the cloud
-1. Sign in at [github.com](https://github.com)
-2. Create a public repository (`cs2-config`, for example)
-3. On the page that opens, click **uploading an existing file**
-4. Drag the contents of the cs2-config folder onto the page
-5. Click **Commit changes**
+#### Use CS2 console
+Open `apply-config-using-console.txt` and copy everything, then paste into the CS2 console.
 
-### Updating the config in the cloud
-1. Open the repository holding your config
-2. Click `Add file` and pick `Upload files`
-3. Drag the contents of the cs2-config folder onto the page
-4. Click **Commit changes**
+For a PC where you cannot write files at all. Configs and crosshair only.
+
+## Launch options
+
+Steam > CS2 > Properties > General.
+
+Portable version, safe on unknown hardware:
+
+```
++fps_max 0 -forcenovsync -nojoy -novid +engine_low_latency_sleep_after_client_tick true -language english -w 1440 -h 1080 -fullscreen +exec autoexec
+```
+
+Your full version, for home:
+
+```
++fps_max 0 -high -forcenovsync -softparticlesdefaultoff +mat_disable_fancy_blending 1 -nojoy -threads 8 -novid +engine_low_latency_sleep_after_client_tick true -language english
+```
+
+## What is in here
+
+```
+apply-config.cmd                 Applies the settings; your configs are embedded in it
+apply-config-using-console.txt   One line to paste into the CS2 console
+update-config.cmd                Re-reads your settings and rebuilds this folder
+.gitattributes                   Keeps the line endings that a downloaded .cmd needs
+cfg\autoexec.cfg                 Runs automatically on startup
+cfg\crosshair.cfg                Your crosshair
+cfg\knife.cfg
+cfg\oceanvievv.cfg               Your main config
+cfg\training.cfg
+video\cs2_video.txt              Resolution and quality
+machine\cs2_machine_convars.vcfg  Radar, fov, volumes: what Steam Cloud does not carry
+cloud-backup\cs2_user_convars_0_slot0.vcfg  What Steam Cloud normally brings
+cloud-backup\cs2_user_keys_0_slot0.vcfg  What Steam Cloud normally brings
+```
+
+The crosshair is applied as convars, so there is nothing to paste. The share code, if you
+want it anyway:
+
+```
+CSGO-v2QEv-LYcjt-cyv7q-Yhiow-YpybE
+```
+
+`cloud-backup\` is a copy of what Steam Cloud normally delivers. You usually never need
+it: logging into Steam brings your sensitivity, crosshair and binds down by itself.
