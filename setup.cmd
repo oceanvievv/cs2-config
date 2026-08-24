@@ -38,14 +38,53 @@ rem  an apostrophe in the path would otherwise break the PowerShell string. SELF
 rem  where the pack gets built, so that this file placed inside a pack updates it.
 set "SELF=%~f0"
 set "SELFDIR=%~dp0"
+
+rem  A newer version of this file, downloaded by the script below and swapped in after it
+rem  exits. Deleted first: a leftover from an earlier run must never stand in for a
+rem  download that did not happen.
+set "ARGS=%*"
+set "NEWTOOL=%TEMP%\cs2-config-newtool.cmd"
+if exist "%NEWTOOL%" del "%NEWTOOL%"
+
 powershell -NoProfile -Command "$m='::'+'PS1'+'::'; $t=[IO.File]::ReadAllText($env:SELF,[Text.Encoding]::UTF8); $i=$t.LastIndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:TEMP+'\cs2-config-setup.ps1', $t.Substring($i+$m.Length), (New-Object Text.UTF8Encoding($true)))"
 if not exist "%PS1%" goto broken
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
+if errorlevel 3 goto swap
 if errorlevel 1 goto failed
 echo.
 pause
 call :openpack
+call :restorecp
+exit /b 0
+
+:swap
+rem  cmd re-reads a batch file by byte offset after every command it runs, so a file that
+rem  overwrites itself mid-run wrecks the rest of its own run. A second cmd does the swap
+rem  once this one is gone, then starts what is now the new file. It retries: the copy
+rem  fails while this process still holds the file open.
+if not exist "%NEWTOOL%" goto failed
+set "SWAP=%TEMP%\cs2-config-swap.cmd"
+> "%SWAP%" echo @echo off
+>>"%SWAP%" echo chcp 65001 ^>nul
+>>"%SWAP%" echo set "N=0"
+>>"%SWAP%" echo :try
+>>"%SWAP%" echo copy /y "%NEWTOOL%" "%SELF%" ^>nul 2^>^&1
+>>"%SWAP%" echo if not errorlevel 1 goto ok
+>>"%SWAP%" echo set /a N+=1
+>>"%SWAP%" echo if %%N%% geq 20 goto stuck
+>>"%SWAP%" echo ping -n 2 127.0.0.1 ^>nul
+>>"%SWAP%" echo goto try
+>>"%SWAP%" echo :ok
+>>"%SWAP%" echo del "%NEWTOOL%" ^>nul 2^>^&1
+>>"%SWAP%" echo set "CS2CFG_UPDATED=1"
+>>"%SWAP%" echo start "" "%SELF%" %ARGS%
+>>"%SWAP%" echo exit /b 0
+>>"%SWAP%" echo :stuck
+>>"%SWAP%" echo echo Could not replace "%SELF%". The new version is at "%NEWTOOL%".
+>>"%SWAP%" echo echo Не удалось заменить "%SELF%". Новая версия лежит в "%NEWTOOL%".
+>>"%SWAP%" echo pause
+start "" /min cmd /c "%SWAP%"
 call :restorecp
 exit /b 0
 
@@ -139,6 +178,10 @@ goto :eof
 .PARAMETER Force
     Skip the notice about overwriting an existing pack folder.
 
+.PARAMETER NoUpdate
+    Do not look for a newer version of this tool. Only ever applies to update-config.cmd
+    inside a pack; setup.cmd never updates itself.
+
 .EXAMPLE
     setup.cmd
 
@@ -153,11 +196,12 @@ param(
     [string[]] $Exclude = @(),
     [string]   $RepoUrl,
     [switch]   $Anonymize,
-    [switch]   $Force
+    [switch]   $Force,
+    [switch]   $NoUpdate
 )
 
 $ErrorActionPreference = 'Stop'
-$TOOL_VERSION = '1.2.0'
+$TOOL_VERSION = '1.3.0'
 $TOOL_URL     = 'https://github.com/oceanvievv/cs2-config'
 
 # The Windows display language decides, and nothing else. Keyboard layouts are
@@ -473,10 +517,102 @@ function Get-PortableLaunchOptions($raw) {
 }
 
 # ==================================================================================
+#  Staying current
+# ==================================================================================
+
+# A pack carries this file as update-config.cmd, frozen at whatever the generator was on
+# the day the pack was built. Rebuilding with it rebuilds through a year-old generator,
+# and it stays that way forever: the copy it would replace itself with is that same stale
+# copy. This is the one thing a pack cannot fix on its own, so it is the one thing here
+# that reaches the network.
+#
+# Only when running as update-config.cmd. Started as setup.cmd this is either the copy in
+# the tool's own repository or a fresh download, and neither wants to be overwritten.
+
+function Get-EmbeddedVersion($text) {
+    if ("$text" -match "(?m)^\s*\`$TOOL_VERSION\s*=\s*'([0-9]+(\.[0-9]+){0,3})'") { return $matches[1] }
+    return $null
+}
+
+# https://github.com/me/tool  ->  the raw bytes of setup.cmd on its default branch.
+function Get-RawSetupUrl($repoUrl) {
+    if ("$repoUrl" -match '^https?://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$') {
+        return "https://raw.githubusercontent.com/$($matches[1])/$($matches[2])/main/setup.cmd"
+    }
+    return $null
+}
+
+function Update-Self {
+    if ($NoUpdate)                   { return }
+    if ($env:CS2CFG_UPDATED -eq '1') { return }   # this run is the relaunch; do not loop
+    if (-not $env:SELF)              { return }
+    if (-not (Test-Path $env:SELF))  { return }
+    if ([IO.Path]::GetFileName($env:SELF) -ne 'update-config.cmd') { return }
+
+    $url = Get-RawSetupUrl $TOOL_URL
+    if (-not $url) { return }
+
+    try {
+        # PowerShell 5.1 on Windows 10 still opens with TLS 1.0, which GitHub refuses.
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        # Eight seconds. A PC behind a captive portal must not turn a rebuild into a hang.
+        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 8
+        $text = $resp.Content
+        if ($text -is [byte[]]) { $text = [Text.Encoding]::UTF8.GetString($text) }
+    } catch {
+        Info "$(Lbl 'Version' 'Версия')$TOOL_VERSION"
+        Info 'GitHub did not answer, staying on this one.' `
+             'GitHub не ответил, остаюсь на этой.'
+        return
+    }
+
+    $newVer = Get-EmbeddedVersion $text
+    if (-not $newVer) { return }
+    if ([version]$newVer -le [version]$TOOL_VERSION) {
+        Ok "$(Lbl 'Version' 'Версия')$TOOL_VERSION"
+        return
+    }
+
+    # Never swap in something that will not run. The marker is spelled in pieces on
+    # purpose: extraction takes the LAST match, so a literal here would become the marker.
+    $marker = '::' + 'PS1' + '::'
+    $i = $text.LastIndexOf($marker)
+    if ($i -lt 0) {
+        Warn "Version $newVer downloaded with no script in it. Staying on $TOOL_VERSION." `
+             "Версия $newVer скачалась без скрипта внутри. Остаюсь на $TOOL_VERSION."
+        return
+    }
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput(
+        $text.Substring($i + $marker.Length), [ref]$null, [ref]$errors)
+    if ($errors -and $errors.Count -gt 0) {
+        Warn "Version $newVer does not parse. Staying on $TOOL_VERSION." `
+             "Версия $newVer не парсится. Остаюсь на $TOOL_VERSION."
+        return
+    }
+
+    # cmd garbles a batch file with LF-only line endings, and what arrives depends on how
+    # the repository was uploaded, so the endings are settled here instead of trusted.
+    $newTool = Join-Path $env:TEMP 'cs2-config-newtool.cmd'
+    [IO.File]::WriteAllText($newTool, (($text -replace "`r`n", "`n") -replace "`n", "`r`n"), $UTF8)
+    $kb = [math]::Round((Get-Item $newTool).Length / 1KB, 1)
+
+    Ok "$TOOL_VERSION -> $newVer, updating" "$TOOL_VERSION -> $newVer, обновляюсь"
+    Ok "setup.cmd  $kb KB, parses clean" "setup.cmd  $kb КБ, синтаксис в порядке"
+    Info 'Swapping this file and starting it again.' `
+         'Подменяю этот файл и запускаю его заново.'
+    # Exit code 3 is the launcher's signal to swap and relaunch. It cannot be done from
+    # here: cmd re-reads a batch file by byte offset after every command it runs.
+    exit 3
+}
+
+# ==================================================================================
 #  Go
 # ==================================================================================
 
-Head '=== cs2-config setup ======================================='
+Head ("=== cs2-config setup $TOOL_VERSION ").PadRight(60, '=')
+Update-Self
 
 $steam = Get-SteamPath
 if (-not $steam) {
@@ -857,7 +993,8 @@ if ($launchPortable -notmatch '(?i)(^|\s)\+exec\s+autoexec(\s|$)') {
 $restoreConsts =
     "`$PackName      = '$($Name -replace "'", "''")'`r`n" +
     "`$LaunchOptions = '$($launchPortable -replace "'", "''")'`r`n" +
-    "`$ToolUrl       = '$TOOL_URL'`r`n"
+    "`$ToolUrl       = '$TOOL_URL'`r`n" +
+    "`$PackTool      = '$TOOL_VERSION'`r`n"
 
 $restoreHead = @'
 <#
@@ -1011,6 +1148,86 @@ function Write-Payload($map, $destDir, $tag) {
     }
 }
 
+# A video config is two things in one file: the settings you picked, and a fingerprint
+# of the PC that wrote them - vendor and device id of the card, monitor, refresh rate.
+# Handed a file whose fingerprint belongs to somebody else's card, CS2 decides the file is
+# not its own, re-detects the hardware and writes its own defaults over all of it. That is
+# why the video settings never survived on a club PC. So the fingerprint is never copied:
+# those lines come from the file this PC already has, only the settings come from the pack.
+$VideoLocalKeys = @('Version', 'VendorID', 'DeviceID', 'Autoconfig',
+                    'setting.knowndevice', 'setting.monitor_index',
+                    'setting.refreshrate_numerator', 'setting.refreshrate_denominator',
+                    'setting.high_dpi')
+
+function Get-VideoIdentity($destPath) {
+    $map = [ordered]@{}
+    if (Test-Path $destPath) {
+        foreach ($line in ([IO.File]::ReadAllText($destPath) -split "`r?`n")) {
+            if ($line -match '^\s*"([^"]+)"\s+"(.*)"\s*$' -and $VideoLocalKeys -contains $matches[1]) {
+                $map[$matches[1]] = $matches[2]
+            }
+        }
+        # Without those two there is no fingerprint to keep, and the file is of no use.
+        if ($map.Contains('VendorID') -and $map.Contains('DeviceID')) { return $map }
+    }
+    # No file yet: this account has never started CS2 here. Windows knows the card anyway.
+    $map  = [ordered]@{}
+    $best = $null
+    try {
+        foreach ($c in (Get-CimInstance Win32_VideoController -ErrorAction Stop)) {
+            if ("$($c.PNPDeviceID)" -notmatch 'VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') { continue }
+            $ven = [Convert]::ToInt32($matches[1], 16)
+            $dev = [Convert]::ToInt32($matches[2], 16)
+            # 4318 is NVIDIA, 4098 is AMD. A machine that has one of those renders the game
+            # on it, and the Intel chip listed next to it only drives the desktop.
+            $rank = 0
+            if ($ven -eq 4318 -or $ven -eq 4098) { $rank = 1 }
+            if (-not $best -or $rank -gt $best.Rank) {
+                $best = [pscustomobject]@{ Rank = $rank; Ven = $ven; Dev = $dev; Hz = $c.CurrentRefreshRate }
+            }
+        }
+    } catch { }
+    if ($best) {
+        $map['VendorID']            = "$($best.Ven)"
+        $map['DeviceID']            = "$($best.Dev)"
+        $map['setting.knowndevice'] = '1'
+        if ($best.Hz -and [int]$best.Hz -gt 0) {
+            $map['setting.refreshrate_numerator']   = "$([int]$best.Hz * 1000)"
+            $map['setting.refreshrate_denominator'] = '1000'
+        }
+    }
+    return $map
+}
+
+function Merge-VideoCfg($packText, $destPath) {
+    $local = Get-VideoIdentity $destPath
+    if ($local.Count -eq 0) { return $packText }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($packText -split "`r?`n")) {
+        if ($line -match '^(\s*"([^"]+)"\s+")(.*)("\s*)$' -and $local.Contains($matches[2])) {
+            $out.Add($matches[1] + $local[$matches[2]] + $matches[4])
+        } else {
+            $out.Add($line)
+        }
+    }
+    return ($out -join "`n")
+}
+
+# The pack as it applies to this one PC. -Check is given the same thing, otherwise it
+# reports a difference on lines that are never going to be written.
+function Get-VideoPayload($map, $destDir) {
+    if (-not $destDir) { return $map }
+    $out = [ordered]@{}
+    foreach ($name in $map.Keys) { $out[$name] = Merge-VideoCfg $map[$name] (Join-Path $destDir $name) }
+    return $out
+}
+
+# CS2 keeps its own copy of these files in memory and writes them out when it exits, so
+# anything written underneath a running game is gone the moment the game is closed.
+function Test-CS2Running {
+    return [bool](Get-Process -Name 'cs2' -ErrorAction SilentlyContinue)
+}
+
 '@
 
 $restoreBody = @'
@@ -1055,6 +1272,12 @@ if (-not $cfgDir) { Die 'CS2 not found in any Steam library. Install CS2 first.'
 $userCfg = Get-UserCfgPath $steam
 Ok ((L 'CS2 cfg folder' 'Папка cfg').PadRight(17) + $cfgDir)
 
+# Written now, overwritten on exit: worth saying before the writing starts, not after.
+if ((-not ($Check -or $Undo)) -and (Test-CS2Running)) {
+    Warn 'CS2 is running. Close it now: on the way out it writes its own video and convar files over everything below.' `
+         'CS2 запущена. Закрой её сейчас: при выходе она перезапишет своими файлами всё, что ниже.'
+}
+
 # --- undo -------------------------------------------------------------------------
 if ($Undo) {
     if (-not (Test-Path $BackupRoot)) { Die 'No backup found on this PC. Nothing to undo.' `
@@ -1095,7 +1318,7 @@ if ($Check) {
                   'Сравниваю набор с тем, что на ПК (ничего не записывается):')
     Compare-Payload $GameCfg  $cfgDir  'cfg'
     if ($userCfg) {
-        Compare-Payload $VideoCfg   $userCfg 'video'
+        Compare-Payload (Get-VideoPayload $VideoCfg $userCfg) $userCfg 'video'
         Compare-Payload $MachineCfg $userCfg 'machine'
         Compare-Payload $CloudCfg   $userCfg 'cloud'
     }
@@ -1132,9 +1355,11 @@ if ($Video) {
     else {
         Write-Host ''
         Write-Host (L 'Writing video settings:' 'Пишу настройки видео:')
-        Write-Payload $VideoCfg $userCfg 'video'
-        Warn 'On a different GPU, CS2 re-detects and overrides some of this. The resolution is in the launch options for that reason.' `
-             'На другой видеокарте CS2 определит её заново и часть этого перепишет. Поэтому разрешение продублировано в параметрах запуска.'
+        Write-Payload (Get-VideoPayload $VideoCfg $userCfg) $userCfg 'video'
+        Info 'Card, monitor and refresh rate are left as this PC had them, so CS2 takes the file as its own instead of re-detecting over it.' `
+             'Видеокарту, монитор и частоту обновления оставил как на этом ПК: CS2 примет файл за свой и не станет определять железо заново.'
+        Info 'The resolution is in the launch options too: those are read before the game opens this file at all.' `
+             'Разрешение продублировал и в параметрах запуска — игра читает их раньше, чем откроет этот файл.'
     }
 } else {
     Info ''
@@ -1185,7 +1410,7 @@ Write-Host ''
 Write-Host (L 'Then start CS2 and check your crosshair, sensitivity and binds.' `
               'Дальше запусти CS2 и проверь прицел, чувствительность и бинды.') -ForegroundColor White
 Write-Host ''
-Write-Host (L "Made with cs2-config: $ToolUrl" "Собрано утилитой cs2-config: $ToolUrl") -ForegroundColor DarkGray
+Write-Host (L "Made with cs2-config ${PackTool}: $ToolUrl" "Собрано утилитой cs2-config ${PackTool}: $ToolUrl") -ForegroundColor DarkGray
 Write-Host ''
 '@
 
@@ -1448,7 +1673,7 @@ $filesBlockRu = ($fileLinesRu -join "`r`n")
 $tmplEn = @'
 # CS2 config
 
-Packed by [cs2-config]({{TOOLURL}}).
+Packed by [cs2-config]({{TOOLURL}}) {{TOOLVER}}.
 
 ## Installing the config on another PC
 
@@ -1457,6 +1682,9 @@ steps.
 
 #### Installation file
 Download [apply-config.cmd]({{DOWNLOAD}}) and launch it.
+
+Close CS2 before you do. A running game holds its own copy of the video settings and
+writes them back over yours on the way out.
 
 #### Copy configs manually
 Copy the files from `cfg\` into:
@@ -1494,7 +1722,7 @@ Your full version, for home:
 ```
 apply-config.cmd                 Applies the settings; your configs are embedded in it
 apply-config-using-console.txt   One line to paste into the CS2 console
-update-config.cmd                Re-reads your settings and rebuilds this folder
+update-config.cmd                Updates itself, then rebuilds this folder
 .gitattributes                   Keeps the line endings that a downloaded .cmd needs
 {{FILES}}
 ```
@@ -1513,7 +1741,7 @@ it: logging into Steam brings your sensitivity, crosshair and binds down by itse
 $tmplRu = @'
 # Конфиг CS2
 
-Собран утилитой [cs2-config]({{TOOLURL}}).
+Собран утилитой [cs2-config]({{TOOLURL}}) {{TOOLVER}}.
 
 ## Установка конфига на другом компьютере
 
@@ -1522,6 +1750,9 @@ $tmplRu = @'
 
 #### Файл установки
 Скачай [apply-config.cmd]({{DOWNLOAD}}) и запусти его.
+
+Сначала закрой CS2. Запущенная игра держит свои настройки видео в памяти и при выходе
+перезапишет ими твои.
 
 #### Скопировать конфиги вручную
 Скопируй файлы из `cfg\` в папку:
@@ -1559,7 +1790,7 @@ Steam > CS2 > «Свойства» > «Общие».
 ```
 apply-config.cmd                 Применяет настройки; конфиги лежат внутри него же
 apply-config-using-console.txt   Одна строка для вставки в консоль CS2
-update-config.cmd                Перечитывает настройки и пересобирает эту папку
+update-config.cmd                Обновляется сам и пересобирает эту папку
 .gitattributes                   Хранит переводы строк, нужные скачанному .cmd
 {{FILES}}
 ```
@@ -1583,6 +1814,7 @@ function Expand-Template($t, $files, $none) {
     $xh = $shareCode
     if (-not $xh) { $xh = $none }
     return $t.Replace('{{TOOLURL}}', $TOOL_URL).
+              Replace('{{TOOLVER}}', $TOOL_VERSION).
               Replace('{{DOWNLOAD}}', $downloadUrl).
               Replace('{{LAUNCHPORTABLE}}', $lp).
               Replace('{{LAUNCHFULL}}', $launchFull).
@@ -1623,8 +1855,8 @@ if ($launchPortable -ne '') {
                   'Поставь их на другом ПК (Steam > CS2 > «Свойства» > «Общие»):') -ForegroundColor White
     Write-Host $launchPortable -ForegroundColor Yellow
     Write-Host ''
-    Write-Host (L 'The resolution is in there because a video config does not survive another GPU.' `
-                  'Разрешение тут потому, что настройки видео не переживают другую видеокарту.') -ForegroundColor DarkGray
+    Write-Host (L 'The resolution is in there twice over: the game reads these before it opens a video config at all.' `
+                  'Разрешение тут продублировано: игра читает эти параметры раньше, чем откроет файл с настройками видео.') -ForegroundColor DarkGray
     Write-Host ''
 }
 Write-Host (L 'Next:' 'Дальше:') -ForegroundColor White
