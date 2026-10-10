@@ -90,7 +90,8 @@ function Show-Header($Title, [switch]$MainMenu) {
         Write-Host ''
         Write-Host ('Config name: ' + $script:Pack.name)
     }
-    Write-Host ''; Write-Host $Title -ForegroundColor White; Write-Host ''
+    Write-Host ''
+    if ($Title) { Write-Host $Title -ForegroundColor White; Write-Host '' }
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
@@ -203,6 +204,10 @@ function Show-Changes($Before,$After) {
 function Show-Issues($Issues) {
     foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
 }
+function Show-ClipboardResult([string]$Text) {
+    if (Copy-LaunchOptions $Text) { Write-Host 'Copied to clipboard.' -ForegroundColor Green }
+    else { Write-Host 'Could not copy to clipboard. Select [3] to retry or copy the launch options above manually.' -ForegroundColor Yellow }
+}
 function Show-Console($Profile) {
     Show-Header 'Console alternative'
     Write-Host ('Profile: ' + $Profile.name)
@@ -236,12 +241,18 @@ function Invoke-ApplyScreen {
         Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field)'})
         Write-Host 'Paste into Steam > CS2 > Properties > General > Launch Options.'
         if (@($result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
-        try { Set-Clipboard -Value $launch; Write-Host 'Copied to clipboard.' } catch { }
+        if ($launch) { Show-ClipboardResult $launch }
         Write-Host "`nStart CS2 to use the saved settings."
         if ($failed.Count) { Write-Host '  [1] Retry'; Write-Host '  [2] Console alternative' }
+        if ($launch) { Write-Host '  [3] Copy launch options' }
         Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
         $options=if ($failed.Count) {@(0,1,2,9)} else {@(0,9)}
-        switch (Read-Choice $options) {
+        if ($launch) { $options+=3 }
+        do {
+            $choice=Read-Choice $options
+            if ($choice -eq 3) { Show-ClipboardResult $launch }
+        } while ($choice -eq 3)
+        switch ($choice) {
             0 { return }; 9 { $script:ExitRequested=$true; return }
             2 { Show-Console $profile; return }
         }
@@ -354,7 +365,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'create' { Invoke-SaveScreen $false }
                 'update' { Invoke-SaveScreen $true }
                 default {
-                    Show-Header 'Select an option below:' -MainMenu
+                    Show-Header '' -MainMenu
                     Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'; Write-Host ''
                     switch (Read-Choice @(0,1,2,3)) {
                         0 { $script:ExitRequested=$true }

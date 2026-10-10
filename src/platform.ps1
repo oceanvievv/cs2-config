@@ -1,3 +1,15 @@
+function Copy-LaunchOptions([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $data = New-Object System.Windows.Forms.DataObject
+        $data.SetText($Text, [System.Windows.Forms.TextDataFormat]::UnicodeText)
+        # Persist after this process exits; retry when another app has the clipboard open.
+        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)
+        $copied = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)
+        return [string]::Equals($copied, $Text, [StringComparison]::Ordinal)
+    } catch { return $false }
+}
 function Assert-GameClosed {
     if (Get-Process -Name cs2 -ErrorAction SilentlyContinue) { throw 'Close CS2 to continue. Exit the game normally, then retry.' }
 }

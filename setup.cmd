@@ -9,7 +9,7 @@ set "CS2_PACK_ROOT=%~dp0"
 set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
 powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
 if errorlevel 1 goto broken
-powershell -NoProfile -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+powershell -NoProfile -STA -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
 set "CS2_RESULT=%ERRORLEVEL%"
 if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
 if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
@@ -24,7 +24,7 @@ param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
 # BEGIN CORE
 # Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
-$TOOL_VERSION = '2.0.4'
+$TOOL_VERSION = '2.0.5'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 function ConvertTo-Map($Value) {
     if ($null -eq $Value) { return $null }
@@ -213,6 +213,18 @@ function Get-StartupCommands($Profile) {
     return ,$lines.ToArray()
 }
 
+function Copy-LaunchOptions([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $data = New-Object System.Windows.Forms.DataObject
+        $data.SetText($Text, [System.Windows.Forms.TextDataFormat]::UnicodeText)
+        # Persist after this process exits; retry when another app has the clipboard open.
+        [System.Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100)
+        $copied = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)
+        return [string]::Equals($copied, $Text, [StringComparison]::Ordinal)
+    } catch { return $false }
+}
 function Assert-GameClosed {
     if (Get-Process -Name cs2 -ErrorAction SilentlyContinue) { throw 'Close CS2 to continue. Exit the game normally, then retry.' }
 }
@@ -492,7 +504,7 @@ set "CS2_PACK_ROOT=%~dp0"
 set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
 powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
 if errorlevel 1 goto broken
-powershell -NoProfile -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+powershell -NoProfile -STA -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
 set "CS2_RESULT=%ERRORLEVEL%"
 if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
 if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
@@ -693,7 +705,8 @@ function Show-Header($Title, [switch]$MainMenu) {
         Write-Host ''
         Write-Host ('Config name: ' + $script:Pack.name)
     }
-    Write-Host ''; Write-Host $Title -ForegroundColor White; Write-Host ''
+    Write-Host ''
+    if ($Title) { Write-Host $Title -ForegroundColor White; Write-Host '' }
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
@@ -806,6 +819,10 @@ function Show-Changes($Before,$After) {
 function Show-Issues($Issues) {
     foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
 }
+function Show-ClipboardResult([string]$Text) {
+    if (Copy-LaunchOptions $Text) { Write-Host 'Copied to clipboard.' -ForegroundColor Green }
+    else { Write-Host 'Could not copy to clipboard. Select [3] to retry or copy the launch options above manually.' -ForegroundColor Yellow }
+}
 function Show-Console($Profile) {
     Show-Header 'Console alternative'
     Write-Host ('Profile: ' + $Profile.name)
@@ -839,12 +856,18 @@ function Invoke-ApplyScreen {
         Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field)'})
         Write-Host 'Paste into Steam > CS2 > Properties > General > Launch Options.'
         if (@($result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
-        try { Set-Clipboard -Value $launch; Write-Host 'Copied to clipboard.' } catch { }
+        if ($launch) { Show-ClipboardResult $launch }
         Write-Host "`nStart CS2 to use the saved settings."
         if ($failed.Count) { Write-Host '  [1] Retry'; Write-Host '  [2] Console alternative' }
+        if ($launch) { Write-Host '  [3] Copy launch options' }
         Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
         $options=if ($failed.Count) {@(0,1,2,9)} else {@(0,9)}
-        switch (Read-Choice $options) {
+        if ($launch) { $options+=3 }
+        do {
+            $choice=Read-Choice $options
+            if ($choice -eq 3) { Show-ClipboardResult $launch }
+        } while ($choice -eq 3)
+        switch ($choice) {
             0 { return }; 9 { $script:ExitRequested=$true; return }
             2 { Show-Console $profile; return }
         }
@@ -957,7 +980,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'create' { Invoke-SaveScreen $false }
                 'update' { Invoke-SaveScreen $true }
                 default {
-                    Show-Header 'Select an option below:' -MainMenu
+                    Show-Header '' -MainMenu
                     Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'; Write-Host ''
                     switch (Read-Choice @(0,1,2,3)) {
                         0 { $script:ExitRequested=$true }

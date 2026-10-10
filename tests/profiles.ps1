@@ -106,7 +106,14 @@ try {
     $outputTask=$process.StandardOutput.ReadToEndAsync(); $errorTask=$process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'CMD smoke test did not exit.' }
     $stdout=$outputTask.Result; $stderr=$errorTask.Result
-    Assert ($process.ExitCode -eq 0 -and $stdout -match 'CS2 CONFIG\r?\n\r?\nConfig name: Test config\r?\n\r?\nSelect an option below:' -and -not $stderr) ('CMD smoke test failed: '+$stdout+$stderr)
+    # The STA console host omits blank lines and Read-Host prompts when redirected.
+    Assert ($process.ExitCode -eq 0 -and $stdout -match 'CS2 CONFIG\s+Config name: Test config\s+\[1\] Apply profile' -and $stdout -notmatch 'Select an option below' -and -not $stderr) ('CMD smoke test failed: '+$stdout+$stderr)
+    Assert (-not (Copy-LaunchOptions '')) 'Empty launch options should not replace the clipboard.'
+    & {
+        function Copy-LaunchOptions { return $false }
+        $feedback=(Show-ClipboardResult '-novid' 6>&1 | Out-String)
+        Assert ($feedback -match 'Could not copy to clipboard' -and $feedback -match '\[3\]' -and $feedback -notmatch 'Copied to clipboard\.') 'Clipboard failure was hidden or reported as success.'
+    }
     $choices=New-Object 'Collections.Generic.Queue[string]'; $choices.Enqueue('');$choices.Enqueue('9');$choices.Enqueue('1')
     function Read-Host { param($Prompt); return $choices.Dequeue() }
     Assert ((Read-Choice @(0,1)) -eq 1 -and $choices.Count -eq 0) 'Blank input selected a default.'

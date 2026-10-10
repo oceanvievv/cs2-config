@@ -13,7 +13,7 @@ set "CS2_PACK_ROOT=%~dp0"
 set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
 powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
 if errorlevel 1 goto broken
-powershell -NoProfile -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+powershell -NoProfile -STA -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
 set "CS2_RESULT=%ERRORLEVEL%"
 if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
 if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
