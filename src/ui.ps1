@@ -82,34 +82,36 @@ function Initialize-Terminal {
         Initialize-TerminalWindowApi
         [void][CS2TerminalWindow]::SetHeight(530)
     } catch { } # Some terminal hosts manage their own window dimensions.
+    Start-TerminalView
 }
 function Show-Header($Title, [switch]$MainMenu) {
     if (-not [Console]::IsOutputRedirected) { try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { } }
-    if (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
+    if ($script:TerminalViewActive) { [CS2TerminalView]::Begin([string]$Title) }
+    elseif (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
     if ($MainMenu) {
-        Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
-        Write-Host ''
-        Write-Host ('Config name: ' + $script:Pack.name)
+        Write-TerminalText 'CS2 CONFIG' -ForegroundColor Cyan
+        Write-TerminalText ''
+        Write-TerminalText ('Config name: ' + $script:Pack.name)
     }
-    Write-Host ''
-    if ($Title) { Write-Host $Title -ForegroundColor White; Write-Host '' }
+    Write-TerminalText ''
+    if ($Title) { Write-TerminalText $Title -ForegroundColor White; Write-TerminalText '' }
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
-        Write-Host ''
-        $value=Read-Host 'Enter an option'
-        Write-Host ''
+        Write-TerminalText ''
+        $value=Read-TerminalLine 'Enter an option'
+        Write-TerminalText ''
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
-        Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow
+        Write-TerminalText 'Enter one of the listed numbers.' -ForegroundColor Yellow
     }
 }
-function Wait-Back { Write-Host ''; [void](Read-Host 'Press Enter to go back') }
+function Wait-Back { Write-TerminalText ''; [void](Read-TerminalLine 'Press Enter to go back') }
 function Select-Profile($Purpose) {
     Show-Header ('Choose a profile to ' + $Purpose)
-    if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
-    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-Host "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
-    Write-Host '  [0] Back'
+    if (-not $script:Pack.profiles.Count) { Write-TerminalText 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
+    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-TerminalText "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
+    Write-TerminalText '  [0] Back'
     $index=Read-Choice (0..$script:Pack.profiles.Count)
     if ($index -eq 0) { return $null }
     return $script:Pack.profiles[$index-1]
@@ -177,14 +179,14 @@ function Get-ProfileRows($Profile) {
     return ,$rows.ToArray()
 }
 function Show-Profile($Profile) {
-    Write-Host ('Profile: ' + $Profile.name)
+    Write-TerminalText ('Profile: ' + $Profile.name)
     # Preserve capture order without PowerShell 7-only Sort-Object -Stable.
     $rows=Get-ProfileRows $Profile
     foreach ($groupName in ($rows.Group | Select-Object -Unique)) {
-        Write-Host ''; Write-Host $groupName -ForegroundColor Cyan
+        Write-TerminalText ''; Write-TerminalText $groupName -ForegroundColor Cyan
         foreach ($row in $rows | Where-Object { $_.Group -eq $groupName }) {
-            if ($row.Name -eq 'Steam Launch Options') { Write-Host $row.Value }
-            else { Write-Host ('  {0,-39} {1}' -f $row.Name,$row.Value) }
+            if ($row.Name -eq 'Steam Launch Options') { Write-TerminalText $row.Value }
+            else { Write-TerminalText ('  {0,-39} {1}' -f $row.Name,$row.Value) }
         }
     }
 }
@@ -193,23 +195,23 @@ function Show-Changes($Before,$After) {
     $count=0
     foreach ($row in (Get-ProfileRows $After)) {
         $key=$row.Group+'/'+$row.Name
-        if (-not $old.ContainsKey($key) -or $old[$key] -cne $row.Value) { Write-Host ('  {0}: {1} -> {2}' -f $row.Name,$old[$key],$row.Value); $count++ }
+        if (-not $old.ContainsKey($key) -or $old[$key] -cne $row.Value) { Write-TerminalText ('  {0}: {1} -> {2}' -f $row.Name,$old[$key],$row.Value); $count++ }
     }
     foreach ($section in @('user','machine','keys','gameFiles','video')) {
         if ((ConvertTo-Json -InputObject $Before[$section] -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $After[$section] -Depth 10 -Compress)) {
             $label=@{user='Player preferences';machine='Audio, HUD and radar';keys='Controls';gameFiles='Custom configs';video='Display and video'}[$section]
-            Write-Host "  $label includes updated settings."
+            Write-TerminalText "  $label includes updated settings."
             $count++
         }
     }
     return $count
 }
 function Show-Issues($Issues) {
-    foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
+    foreach ($issue in $Issues) { Write-TerminalText ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
 }
 function Show-ClipboardResult([string]$Text) {
-    if (Copy-LaunchOptions $Text) { Write-Host 'Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.' }
-    else { Write-Host 'Could not copy launch options to clipboard. Use Copy launch options to retry or copy the line above manually.' -ForegroundColor Yellow }
+    if (Copy-LaunchOptions $Text) { Write-TerminalText 'Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.' }
+    else { Write-TerminalText 'Could not copy launch options to clipboard. Use Copy launch options to retry or copy the line above manually.' -ForegroundColor Yellow }
 }
 function Show-ApplyResult($Profile, $Plan, $Result) {
     $failed=@($Result.Issues | Where-Object {$_.Kind -eq 'Skipped'})
@@ -218,20 +220,20 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
         else { 'Profile {0} could not be applied' }
     Show-Header ($title -f $Profile.name)
     Show-Issues $Result.Issues
-    if ($Result.Issues.Count) { Write-Host '' }
-    Write-Host 'Launch options:'; Write-Host ''
+    if ($Result.Issues.Count) { Write-TerminalText '' }
+    Write-TerminalText 'Launch options:'; Write-TerminalText ''
     $launch=Get-EffectiveLaunchOptions $Profile $Plan
-    Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
-    Write-Host ''
-    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow; Write-Host '' }
+    Write-TerminalText $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
+    Write-TerminalText ''
+    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-TerminalText 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow; Write-TerminalText '' }
     if ($launch) { Show-ClipboardResult $launch }
     $actions=@()
     if ($failed.Count) { $actions+=@('Retry','Console alternative') }
     if ($launch) { $actions+='Copy launch options' }
     $actions+='Exit'
-    Write-Host ''
-    for ($i=0; $i -lt $actions.Count; $i++) { Write-Host ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
-    Write-Host '  [0] Back to main menu'
+    Write-TerminalText ''
+    for ($i=0; $i -lt $actions.Count; $i++) { Write-TerminalText ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
+    Write-TerminalText '  [0] Back to main menu'
     while ($true) {
         $choice=Read-Choice (0..$actions.Count)
         if ($choice -eq 0) { return 'Back' }
@@ -242,13 +244,13 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
 }
 function Show-Console($Profile) {
     Show-Header 'Console alternative'
-    Write-Host ('Profile: ' + $Profile.name)
+    Write-TerminalText ('Profile: ' + $Profile.name)
     $path=Join-Path $script:Root ('console\'+(Get-ConsoleFilename $Profile))
     Write-TextFile $path (Get-ConsoleCommands $Profile)
-    Write-Host "`n1. Open $path"
-    Write-Host '2. Copy its commands into the CS2 console in small batches and run them.'
-    Write-Host '3. Check your settings in CS2.'
-    Write-Host "`nSupported settings: crosshair, mouse, audio and controls."
+    Write-TerminalText "`n1. Open $path"
+    Write-TerminalText '2. Copy its commands into the CS2 console in small batches and run them.'
+    Write-TerminalText '3. Check your settings in CS2.'
+    Write-TerminalText "`nSupported settings: crosshair, mouse, audio and controls."
     Wait-Back
 }
 function Invoke-ApplyScreen {
@@ -258,9 +260,9 @@ function Invoke-ApplyScreen {
     while ($true) {
         $plan=New-ApplyPlan $profile $context
         Show-Header 'Apply profile'; Show-Profile $profile
-        Write-Host ''; Show-Issues $plan.Video.Issues
+        Write-TerminalText ''; Show-Issues $plan.Video.Issues
         $label=if (@($plan.Video.Issues | Where-Object {$_.Kind -eq 'Skipped'}).Count) {'Apply available settings'} else {'Apply'}
-        Write-Host "`n  [1] $label"; Write-Host '  [0] Back'
+        Write-TerminalText "`n  [1] $label"; Write-TerminalText '  [0] Back'
         if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
         $result=Invoke-ApplyPlan $plan
         switch (Show-ApplyResult $profile $plan $result) {
@@ -272,12 +274,12 @@ function Invoke-ApplyScreen {
 }
 function Read-ProfileName {
     while ($true) {
-        $name=Read-Host 'Profile name (0 to go back)'
-        Write-Host ''
+        $name=Read-TerminalLine 'Profile name (0 to go back)'
+        Write-TerminalText ''
         if ($name -eq '0') { return '' }
         $name=$name.Trim()
-        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-Host 'Enter a profile name (1-100 characters).'; Write-Host ''; continue }
-        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-Host 'A profile with this name already exists.'; Write-Host ''; continue }
+        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-TerminalText 'Enter a profile name (1-100 characters).'; Write-TerminalText ''; continue }
+        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-TerminalText 'A profile with this name already exists.'; Write-TerminalText ''; continue }
         return $name
     }
 }
@@ -291,10 +293,10 @@ function Export-WithRetry($Pack,$Destination,[switch]$Rename,$PreviousProfile=$n
                 try { $script:Pack=Read-Pack $Destination ''; $script:Root=$Destination } catch { }
             }
             Show-Header 'Config files could not all be updated'
-            Write-Host ('Folder: '+$Destination)
-            Write-Host ''
-            Write-Host 'Check folder permissions and close programs using these files, then retry.'
-            Write-Host "`n  [1] Retry"; Write-Host '  [0] Back to main menu'
+            Write-TerminalText ('Folder: '+$Destination)
+            Write-TerminalText ''
+            Write-TerminalText 'Check folder permissions and close programs using these files, then retry.'
+            Write-TerminalText "`n  [1] Retry"; Write-TerminalText '  [0] Back to main menu'
             if ((Read-Choice @(0,1)) -eq 0) { return $false }
         }
     }
@@ -309,19 +311,19 @@ function Invoke-RenameScreen([switch]$Profile) {
         $kind='profile'; $currentName=$selected.name
     }
     Show-Header ('Rename ' + $kind)
-    Write-Host ('Current name: ' + $currentName)
-    Write-Host ''; Write-Host '  [0] Back'
+    Write-TerminalText ('Current name: ' + $currentName)
+    Write-TerminalText ''; Write-TerminalText '  [0] Back'
     while ($true) {
-        Write-Host ''
-        $name=(Read-Host ('New ' + $kind + ' name')).Trim()
-        Write-Host ''
+        Write-TerminalText ''
+        $name=(Read-TerminalLine ('New ' + $kind + ' name')).Trim()
+        Write-TerminalText ''
         if ($name -eq '0') { if ($Profile) { continue ChooseRename }; return }
         if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f\x7f]') {
-            Write-Host ('Enter a ' + $kind + ' name (1-100 characters).') -ForegroundColor Yellow
+            Write-TerminalText ('Enter a ' + $kind + ' name (1-100 characters).') -ForegroundColor Yellow
             continue
         }
         if ($Profile -and @($script:Pack.profiles | Where-Object {$_.id -ne $selected.id -and $_.name -eq $name}).Count) {
-            Write-Host 'A profile with this name already exists.' -ForegroundColor Yellow
+            Write-TerminalText 'A profile with this name already exists.' -ForegroundColor Yellow
             continue
         }
         $label=if ($Profile) {'Profile'} else {'Config'}
@@ -335,7 +337,7 @@ function Invoke-RenameScreen([switch]$Profile) {
             $script:Pack=$next
             Show-Header ($label + ' renamed to ' + $name)
         }
-        Write-Host '  [0] Back to main menu'
+        Write-TerminalText '  [0] Back to main menu'
         [void](Read-Choice @(0))
         return
     }
@@ -353,30 +355,30 @@ function Invoke-SaveScreen($Update) {
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'profiles.json')) -and -not $script:Pack.profiles.Count) { $destination=Join-Path $destination 'cs2-config' }
     while ($true) {
         if ($Update) {
-            Show-Header 'Review profile changes'; Write-Host ('Profile: '+$name); Write-Host ''
+            Show-Header 'Review profile changes'; Write-TerminalText ('Profile: '+$name); Write-TerminalText ''
             $changes=Show-Changes $existing $profile
-            if (-not $changes) { Write-Host 'Profile is already up to date.'; Wait-Back; return }
-            Write-Host "`n  [1] Save changes"; Write-Host '  [2] View all settings'
+            if (-not $changes) { Write-TerminalText 'Profile is already up to date.'; Wait-Back; return }
+            Write-TerminalText "`n  [1] Save changes"; Write-TerminalText '  [2] View all settings'
         } else {
             Show-Header 'Review new profile'; Show-Profile $profile
-            Write-Host "`nSave to: $destination"
-            Write-Host ''
-            Write-Host '  [1] Create profile'; Write-Host '  [2] Change destination'
+            Write-TerminalText "`nSave to: $destination"
+            Write-TerminalText ''
+            Write-TerminalText '  [1] Create profile'; Write-TerminalText '  [2] Change destination'
         }
-        Write-Host '  [0] Back'
+        Write-TerminalText '  [0] Back'
         switch (Read-Choice @(0,1,2)) {
             0 { continue ChooseSource }
             2 {
                 if ($Update) { Show-Header 'Current settings on this PC'; Show-Profile $profile; Wait-Back }
                 else {
                     Show-Header 'Change destination'
-                    Write-Host ('Current folder: ' + $destination)
-                    Write-Host ''
-                    $path=(Read-Host 'Folder (0 to go back)').Trim().Trim('"')
-                    Write-Host ''
+                    Write-TerminalText ('Current folder: ' + $destination)
+                    Write-TerminalText ''
+                    $path=(Read-TerminalLine 'Folder (0 to go back)').Trim().Trim('"')
+                    Write-TerminalText ''
                     if ($path -ne '0' -and $path) {
                         $candidate=[IO.Path]::GetFullPath($path)
-                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-Host 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
+                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-TerminalText 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
                         else { $destination=$candidate }
                     }
                 }
@@ -390,14 +392,14 @@ function Invoke-SaveScreen($Update) {
                 if (-not (Export-WithRetry $next $destination)) { return }
                 $script:Pack=$next; $script:Root=$destination
                 Show-Header $(if ($Update) {'Profile updated'} else {'Profile created'})
-                Write-Host ('Profile: '+$name); Write-Host ('Folder: '+$destination)
-                Write-Host ''
-                Write-Host 'Open apply-config.cmd to apply a profile.'
-                Write-Host ''
-                Write-Host 'Open update-config.cmd to update it.'
-                Write-Host "`n  [1] Publishing instructions"; Write-Host '  [2] Exit'; Write-Host '  [0] Back to main menu'
+                Write-TerminalText ('Profile: '+$name); Write-TerminalText ('Folder: '+$destination)
+                Write-TerminalText ''
+                Write-TerminalText 'Open apply-config.cmd to apply a profile.'
+                Write-TerminalText ''
+                Write-TerminalText 'Open update-config.cmd to update it.'
+                Write-TerminalText "`n  [1] Publishing instructions"; Write-TerminalText '  [2] Exit'; Write-TerminalText '  [0] Back to main menu'
                 switch (Read-Choice @(0,1,2)) {
-                    1 { Show-Header 'Update your config on GitHub'; Write-Host '1. Open your config repository on GitHub.'; Write-Host '2. Choose Add file > Upload files.'; Write-Host '3. Upload the updated config folder contents.'; Write-Host '4. Choose Commit changes.'; Wait-Back }
+                    1 { Show-Header 'Update your config on GitHub'; Write-TerminalText '1. Open your config repository on GitHub.'; Write-TerminalText '2. Choose Add file > Upload files.'; Write-TerminalText '3. Upload the updated config folder contents.'; Write-TerminalText '4. Choose Commit changes.'; Wait-Back }
                     2 { $script:ExitRequested=$true }
                 }
                 return
@@ -428,7 +430,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'rename-profile' { Invoke-RenameScreen -Profile }
                 default {
                     Show-Header '' -MainMenu
-                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [4] Rename config'; Write-Host '  [5] Rename profile'; Write-Host '  [0] Exit'
+                    Write-TerminalText '  [1] Apply profile'; Write-TerminalText '  [2] Update profile'; Write-TerminalText '  [3] Create profile'; Write-TerminalText '  [4] Rename config'; Write-TerminalText '  [5] Rename profile'; Write-TerminalText '  [0] Exit'
                     switch (Read-Choice @(0,1,2,3,4,5)) {
                         0 { $script:ExitRequested=$true }
                         1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }
@@ -438,7 +440,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                     continue MenuLoop
                 }
             }
-        } catch { Show-Header 'Could not continue'; Write-Host $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
+        } catch { Show-Header 'Could not continue'; Write-TerminalText $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
         $Mode='menu'
     }
 }

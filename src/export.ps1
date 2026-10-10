@@ -26,7 +26,8 @@ $ErrorActionPreference = 'Stop'
 $script:CoreSource = [IO.File]::ReadAllText($PSCommandPath)
 $script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(.*?)^# END CORE\r?$').Groups[1].Value.Trim()
 try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT '__PAYLOAD__' }
-catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+catch { Stop-TerminalView; Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+finally { Stop-TerminalView }
 '@
     $text = $header.Replace('__MODE__',$Mode) + "`n" + $entry.Replace('__MODE__',$Mode) + "`n# BEGIN CORE`n" + $Core.Trim() + "`n# END CORE`n" + $tail.Replace('__PAYLOAD__',$encoded)
     return ($text -replace "`r?`n", "`r`n") + "`r`n"

@@ -26,6 +26,10 @@ There are no predefined profile names. Even a single profile requires explicit
 selection. **Back** returns one screen; **Back to main menu** returns to the main menu.
 No backup or restore workflow is created.
 
+In the standard Windows console, the input stays at the bottom of the window.
+Scroll long screens with the mouse wheel or Page Up / Page Down; returning to a
+section restores its scroll position. Ctrl+V pastes text into the input.
+
 ## Apply a profile
 
 1. Close CS2 and sign in to Steam with the account you will use.
@@ -98,6 +102,7 @@ The shared PowerShell 5.1 implementation is in `src`. `setup.cmd` is generated:
 powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/crosshair.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/profiles.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/terminal.ps1
 ```
 
 Tests use temporary directories and do not modify installed Steam or CS2 settings.

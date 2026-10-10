@@ -1,6 +1,6 @@
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-$names=@('storage','capture','platform','apply','export','ui')
+$names=@('storage','capture','platform','apply','export','terminal','ui')
 $parts=@($names | ForEach-Object {[IO.File]::ReadAllText((Join-Path $repo "src\$_.ps1"))})
 $script:CoreSource=$parts -join "`r`n"
 foreach ($part in $parts) { . ([scriptblock]::Create($part)) }

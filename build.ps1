@@ -1,6 +1,6 @@
 param([string]$OutFile = (Join-Path $PSScriptRoot 'setup.cmd'))
 $ErrorActionPreference='Stop'
-$names=@('storage','capture','platform','apply','export','ui')
+$names=@('storage','capture','platform','apply','export','terminal','ui')
 $parts=@($names | ForEach-Object { [IO.File]::ReadAllText((Join-Path $PSScriptRoot "src\$_.ps1")) })
 $script:CoreSource=$parts -join "`r`n"
 foreach ($part in $parts) { . ([scriptblock]::Create($part)) }

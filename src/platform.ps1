@@ -46,14 +46,14 @@ function Get-Context {
     $steam = Find-Steam
     while (-not $steam -or -not (Test-Path -LiteralPath (Join-Path $steam 'steam.exe'))) {
         Show-Header 'Steam installation not found'
-        $steam = Read-Host 'Steam folder (0 to go back)'
+        $steam = Read-TerminalLine 'Steam folder (0 to go back)'
         if ($steam -eq '0') { return $null }
         $steam = $steam.Trim().Trim('"')
     }
     $game = Find-Game $steam
     while (-not $game -or -not (Test-Path -LiteralPath (Join-Path $game 'game\csgo\cfg'))) {
         Show-Header 'CS2 installation not found'
-        $game = Read-Host 'CS2 installation folder (0 to go back)'
+        $game = Read-TerminalLine 'CS2 installation folder (0 to go back)'
         if ($game -eq '0') { return $null }
         $game = $game.Trim().Trim('"')
     }
@@ -66,8 +66,8 @@ function Get-Context {
     if (-not $accountId) {
         if (-not $accounts.Count) { throw 'Sign in to Steam with the account you want to use, then retry.' }
         Show-Header 'Choose a Steam account'
-        for ($i=0; $i -lt $accounts.Count; $i++) { Write-Host "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
-        Write-Host '  [0] Back'
+        for ($i=0; $i -lt $accounts.Count; $i++) { Write-TerminalText "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
+        Write-TerminalText '  [0] Back'
         $index = Read-Choice (0..$accounts.Count)
         if ($index -eq 0) { return $null }
         $accountId = $accounts[$index-1].Id

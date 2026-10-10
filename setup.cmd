@@ -17,7 +17,7 @@ param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
 # BEGIN CORE
 # Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
-$TOOL_VERSION = '2.1.0'
+$TOOL_VERSION = '2.2.0'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 function ConvertTo-Map($Value) {
     if ($null -eq $Value) { return $null }
@@ -254,14 +254,14 @@ function Get-Context {
     $steam = Find-Steam
     while (-not $steam -or -not (Test-Path -LiteralPath (Join-Path $steam 'steam.exe'))) {
         Show-Header 'Steam installation not found'
-        $steam = Read-Host 'Steam folder (0 to go back)'
+        $steam = Read-TerminalLine 'Steam folder (0 to go back)'
         if ($steam -eq '0') { return $null }
         $steam = $steam.Trim().Trim('"')
     }
     $game = Find-Game $steam
     while (-not $game -or -not (Test-Path -LiteralPath (Join-Path $game 'game\csgo\cfg'))) {
         Show-Header 'CS2 installation not found'
-        $game = Read-Host 'CS2 installation folder (0 to go back)'
+        $game = Read-TerminalLine 'CS2 installation folder (0 to go back)'
         if ($game -eq '0') { return $null }
         $game = $game.Trim().Trim('"')
     }
@@ -274,8 +274,8 @@ function Get-Context {
     if (-not $accountId) {
         if (-not $accounts.Count) { throw 'Sign in to Steam with the account you want to use, then retry.' }
         Show-Header 'Choose a Steam account'
-        for ($i=0; $i -lt $accounts.Count; $i++) { Write-Host "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
-        Write-Host '  [0] Back'
+        for ($i=0; $i -lt $accounts.Count; $i++) { Write-TerminalText "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
+        Write-TerminalText '  [0] Back'
         $index = Read-Choice (0..$accounts.Count)
         if ($index -eq 0) { return $null }
         $accountId = $accounts[$index-1].Id
@@ -510,7 +510,8 @@ $ErrorActionPreference = 'Stop'
 $script:CoreSource = [IO.File]::ReadAllText($PSCommandPath)
 $script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(.*?)^# END CORE\r?$').Groups[1].Value.Trim()
 try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT '__PAYLOAD__' }
-catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+catch { Stop-TerminalView; Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+finally { Stop-TerminalView }
 '@
     $text = $header.Replace('__MODE__',$Mode) + "`n" + $entry.Replace('__MODE__',$Mode) + "`n# BEGIN CORE`n" + $Core.Trim() + "`n# END CORE`n" + $tail.Replace('__PAYLOAD__',$encoded)
     return ($text -replace "`r?`n", "`r`n") + "`r`n"
@@ -629,6 +630,215 @@ function Import-LegacyProfile($Root,$Name) {
     }
 }
 
+function Initialize-TerminalViewApi {
+    if ('CS2TerminalView' -as [type]) { return }
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class CS2TerminalView {
+    [StructLayout(LayoutKind.Sequential)] public struct Coord {
+        public short X, Y;
+        public Coord(int x, int y) { X=(short)x; Y=(short)y; }
+    }
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public short Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Explicit, CharSet=CharSet.Unicode)] public struct Cell {
+        [FieldOffset(0)] public char Character;
+        [FieldOffset(2)] public ushort Attributes;
+    }
+    [StructLayout(LayoutKind.Explicit, Size=20, CharSet=CharSet.Unicode)] public struct Input {
+        [FieldOffset(0)] public ushort Type;
+        [FieldOffset(4)] public int KeyDown;
+        [FieldOffset(8)] public ushort Repeat;
+        [FieldOffset(10)] public ushort Key;
+        [FieldOffset(14)] public char Character;
+        [FieldOffset(16)] public uint Control;
+        [FieldOffset(4)] public Coord Mouse;
+        [FieldOffset(8)] public uint Buttons;
+        [FieldOffset(16)] public uint MouseFlags;
+    }
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int handle);
+    [DllImport("kernel32.dll")] static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+    [DllImport("kernel32.dll")] static extern bool SetConsoleMode(IntPtr handle, uint mode);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern bool WriteConsoleOutputW(IntPtr handle, Cell[] cells, Coord size, Coord origin, ref Rect region);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern bool ReadConsoleInputW(IntPtr handle, [Out] Input[] records, uint count, out uint read);
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+
+    class Line {
+        public string Text;
+        public ushort Color;
+        public Line(string text, ushort color) { Text=text; Color=color; }
+    }
+    static readonly List<Line> lines=new List<Line>();
+    static readonly Dictionary<string,int> positions=new Dictionary<string,int>();
+    static IntPtr input, output;
+    static uint originalMode;
+    static int originalWidth, originalHeight, offset, maximum, pageHeight;
+    static string screen="";
+    static ushort normalColor;
+    static bool feedback;
+    public static bool Active { get; private set; }
+    public static bool Cancelled { get; private set; }
+    public static int ScrollOffset { get { return offset; } }
+    public static int PromptRow { get; private set; }
+
+    public static bool Start() {
+        if (Active) return true;
+        input=GetStdHandle(-10); output=GetStdHandle(-11);
+        if (!GetConsoleMode(input,out originalMode) || Console.WindowWidth<4 || Console.WindowHeight<5) return false;
+        originalWidth=Console.BufferWidth; originalHeight=Console.BufferHeight;
+        normalColor=(ushort)((int)Console.ForegroundColor | ((int)Console.BackgroundColor<<4));
+        // Mouse events replace native scrollback; typed characters are rendered only in the footer.
+        if (!SetConsoleMode(input,(originalMode | 0x0098u) & ~0x0047u)) return false;
+        Active=true;
+        Cancelled=false; feedback=false;
+        lines.Clear(); positions.Clear(); screen=""; offset=0;
+        try { FitBuffer(); return true; } catch { Stop(); return false; }
+    }
+    public static bool HasVisibleConsole() { return IsWindowVisible(GetConsoleWindow()); }
+    static void FitBuffer() {
+        int width=Console.WindowWidth, height=Console.WindowHeight;
+        if (Console.WindowLeft!=0 || Console.WindowTop!=0) Console.SetWindowPosition(0,0);
+        if (Console.BufferWidth!=width || Console.BufferHeight!=height) Console.SetBufferSize(width,height);
+    }
+    public static void Stop() {
+        if (!Active) return;
+        SetConsoleMode(input,originalMode);
+        try { Console.SetBufferSize(Math.Max(originalWidth,Console.WindowWidth),Math.Max(originalHeight,Console.WindowHeight)); } catch { }
+        Active=false;
+    }
+    public static void Begin(string key) {
+        if (!feedback) positions[screen]=offset;
+        screen=key ?? "";
+        if (!positions.TryGetValue(screen,out offset)) offset=0;
+        lines.Clear();
+        feedback=false;
+    }
+    public static void Add(string text, int color) {
+        ushort attributes=color<0 ? normalColor : (ushort)((normalColor & 0xF0) | color);
+        foreach (string line in (text ?? "").Replace("\r","").Replace("\t","    ").Split('\n')) lines.Add(new Line(line,attributes));
+        if (feedback && !String.IsNullOrWhiteSpace(text)) offset=Int32.MaxValue;
+    }
+    static List<Line> Wrap(int width) {
+        var result=new List<Line>();
+        foreach (Line line in lines) {
+            if (line.Text.Length==0) result.Add(line);
+            else for (int start=0;start<line.Text.Length;start+=width)
+                result.Add(new Line(line.Text.Substring(start,Math.Min(width,line.Text.Length-start)),line.Color));
+        }
+        return result;
+    }
+    static void Put(Cell[] cells,int width,int row,string text,ushort color) {
+        for (int x=0;x<Math.Min(width,text.Length);x++) {
+            cells[row*width+x].Character=text[x]; cells[row*width+x].Attributes=color;
+        }
+    }
+    public static void Render(string prompt,string value,int caret) {
+        FitBuffer();
+        int width=Console.WindowWidth, height=Console.WindowHeight;
+        if (width<4 || height<5) return;
+        pageHeight=height-3; PromptRow=height-1;
+        var body=Wrap(width-1);
+        maximum=Math.Max(0,body.Count-pageHeight);
+        offset=Math.Max(0,Math.Min(offset,maximum));
+        var cells=new Cell[width*height];
+        for (int i=0;i<cells.Length;i++) { cells[i].Character=' '; cells[i].Attributes=normalColor; }
+        for (int y=0;y<pageHeight && offset+y<body.Count;y++) Put(cells,width,y,body[offset+y].Text,body[offset+y].Color);
+        if (maximum>0) {
+            string hint=String.Format("Scroll: wheel / PgUp / PgDn   {0}-{1} of {2}",offset+1,Math.Min(body.Count,offset+pageHeight),body.Count);
+            Put(cells,width,height-3,hint,(ushort)((normalColor & 0xF0) | 8));
+            int thumb=(int)((long)offset*(pageHeight-1)/maximum);
+            for (int y=0;y<pageHeight;y++) {
+                cells[y*width+width-1].Character=y==thumb ? '\u2588' : '\u2502';
+                cells[y*width+width-1].Attributes=(ushort)((normalColor & 0xF0) | 8);
+            }
+        }
+        string prefix=(prompt ?? "")+": ";
+        if (prefix.Length>width/2) prefix=prefix.Substring(0,width/2);
+        int room=Math.Max(1,width-prefix.Length-1);
+        int start=Math.Max(0,caret-room+1);
+        string shown=value.Substring(start,Math.Min(room,value.Length-start));
+        Put(cells,width,PromptRow,prefix+shown,normalColor);
+        var region=new Rect { Left=0,Top=0,Right=(short)(width-1),Bottom=(short)(height-1) };
+        if (!WriteConsoleOutputW(output,cells,new Coord(width,height),new Coord(0,0),ref region)) throw new InvalidOperationException("The terminal could not be redrawn.");
+        Console.SetCursorPosition(Math.Min(width-1,prefix.Length+caret-start),PromptRow);
+    }
+    public static void Scroll(int rows) { offset=Math.Max(0,Math.Min(maximum,offset+rows)); }
+    public static string ReadLine(string prompt) {
+        var value=new StringBuilder(); int caret=0;
+        while (true) {
+            Render(prompt,value.ToString(),caret);
+            var records=new Input[1]; uint count;
+            if (!ReadConsoleInputW(input,records,1,out count)) throw new InvalidOperationException("The terminal input could not be read.");
+            if (count==0) continue;
+            Input record=records[0];
+            if (record.Type==2) {
+                if ((record.MouseFlags & 4)!=0) Scroll(-Math.Sign((short)(record.Buttons>>16))*3);
+                else if ((record.Buttons & 1)!=0 && record.Mouse.X==Console.WindowWidth-1 && maximum>0)
+                    offset=(int)((long)Math.Max(0,Math.Min(pageHeight-1,(int)record.Mouse.Y))*maximum/Math.Max(1,pageHeight-1));
+                continue;
+            }
+            if (record.Type!=1 || record.KeyDown==0) continue;
+            if ((record.Control & 12)!=0 && record.Key==67) { Cancelled=true; return "0"; }
+            if (record.Key==13) { positions[screen]=offset; feedback=true; return value.ToString(); }
+            if (((record.Control & 12)!=0 && record.Key==86) || ((record.Control & 16)!=0 && record.Key==45)) {
+                try {
+                    string pasted=System.Windows.Forms.Clipboard.GetText();
+                    foreach (char ch in pasted) if (!Char.IsControl(ch) && value.Length<4096) value.Insert(caret++,ch);
+                } catch { }
+                continue;
+            }
+            if (record.Key==33) { Scroll(-pageHeight); continue; }
+            if (record.Key==34) { Scroll(pageHeight); continue; }
+            if (record.Key==38) { Scroll(-1); continue; }
+            if (record.Key==40) { Scroll(1); continue; }
+            if ((record.Control & 12)!=0 && record.Key==36) { offset=0; continue; }
+            if ((record.Control & 12)!=0 && record.Key==35) { offset=maximum; continue; }
+            if (record.Key==36) { caret=0; continue; }
+            if (record.Key==35) { caret=value.Length; continue; }
+            if (record.Key==37) { caret=Math.Max(0,caret-1); continue; }
+            if (record.Key==39) { caret=Math.Min(value.Length,caret+1); continue; }
+            if (record.Key==8) { if (caret>0) value.Remove(--caret,1); continue; }
+            if (record.Key==46) { if (caret<value.Length) value.Remove(caret,1); continue; }
+            if (!Char.IsControl(record.Character) && value.Length<4096) {
+                for (int n=0;n<Math.Max(1,(int)record.Repeat) && value.Length<4096;n++) value.Insert(caret++,record.Character);
+            }
+        }
+    }
+}
+'@
+}
+function Start-TerminalView {
+    $script:TerminalViewActive=$false
+    if ([Console]::IsOutputRedirected -or [Console]::IsInputRedirected) { return }
+    try {
+        Initialize-TerminalViewApi
+        if ([CS2TerminalView]::HasVisibleConsole()) { $script:TerminalViewActive=[CS2TerminalView]::Start() }
+    } catch { $script:TerminalViewActive=$false }
+}
+function Stop-TerminalView {
+    if ($script:TerminalViewActive) { [CS2TerminalView]::Stop(); $script:TerminalViewActive=$false }
+}
+function Write-TerminalText($Object='', $ForegroundColor) {
+    if ($script:TerminalViewActive) {
+        $color=if ($null -eq $ForegroundColor) {-1} else {[int][ConsoleColor]$ForegroundColor}
+        [CS2TerminalView]::Add([string]$Object,$color)
+    } elseif ($null -eq $ForegroundColor) { Write-Host $Object }
+    else { Write-Host $Object -ForegroundColor $ForegroundColor }
+}
+function Read-TerminalLine([string]$Prompt) {
+    if ($script:TerminalViewActive) {
+        $value=[CS2TerminalView]::ReadLine($Prompt)
+        if ([CS2TerminalView]::Cancelled) { $script:ExitRequested=$true }
+        return $value
+    }
+    return Read-Host $Prompt
+}
+
 function Initialize-TerminalWindowApi {
     if ('CS2TerminalWindow' -as [type]) { return }
     Add-Type -TypeDefinition @'
@@ -713,34 +923,36 @@ function Initialize-Terminal {
         Initialize-TerminalWindowApi
         [void][CS2TerminalWindow]::SetHeight(530)
     } catch { } # Some terminal hosts manage their own window dimensions.
+    Start-TerminalView
 }
 function Show-Header($Title, [switch]$MainMenu) {
     if (-not [Console]::IsOutputRedirected) { try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { } }
-    if (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
+    if ($script:TerminalViewActive) { [CS2TerminalView]::Begin([string]$Title) }
+    elseif (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
     if ($MainMenu) {
-        Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
-        Write-Host ''
-        Write-Host ('Config name: ' + $script:Pack.name)
+        Write-TerminalText 'CS2 CONFIG' -ForegroundColor Cyan
+        Write-TerminalText ''
+        Write-TerminalText ('Config name: ' + $script:Pack.name)
     }
-    Write-Host ''
-    if ($Title) { Write-Host $Title -ForegroundColor White; Write-Host '' }
+    Write-TerminalText ''
+    if ($Title) { Write-TerminalText $Title -ForegroundColor White; Write-TerminalText '' }
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
-        Write-Host ''
-        $value=Read-Host 'Enter an option'
-        Write-Host ''
+        Write-TerminalText ''
+        $value=Read-TerminalLine 'Enter an option'
+        Write-TerminalText ''
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
-        Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow
+        Write-TerminalText 'Enter one of the listed numbers.' -ForegroundColor Yellow
     }
 }
-function Wait-Back { Write-Host ''; [void](Read-Host 'Press Enter to go back') }
+function Wait-Back { Write-TerminalText ''; [void](Read-TerminalLine 'Press Enter to go back') }
 function Select-Profile($Purpose) {
     Show-Header ('Choose a profile to ' + $Purpose)
-    if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
-    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-Host "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
-    Write-Host '  [0] Back'
+    if (-not $script:Pack.profiles.Count) { Write-TerminalText 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
+    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-TerminalText "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
+    Write-TerminalText '  [0] Back'
     $index=Read-Choice (0..$script:Pack.profiles.Count)
     if ($index -eq 0) { return $null }
     return $script:Pack.profiles[$index-1]
@@ -808,14 +1020,14 @@ function Get-ProfileRows($Profile) {
     return ,$rows.ToArray()
 }
 function Show-Profile($Profile) {
-    Write-Host ('Profile: ' + $Profile.name)
+    Write-TerminalText ('Profile: ' + $Profile.name)
     # Preserve capture order without PowerShell 7-only Sort-Object -Stable.
     $rows=Get-ProfileRows $Profile
     foreach ($groupName in ($rows.Group | Select-Object -Unique)) {
-        Write-Host ''; Write-Host $groupName -ForegroundColor Cyan
+        Write-TerminalText ''; Write-TerminalText $groupName -ForegroundColor Cyan
         foreach ($row in $rows | Where-Object { $_.Group -eq $groupName }) {
-            if ($row.Name -eq 'Steam Launch Options') { Write-Host $row.Value }
-            else { Write-Host ('  {0,-39} {1}' -f $row.Name,$row.Value) }
+            if ($row.Name -eq 'Steam Launch Options') { Write-TerminalText $row.Value }
+            else { Write-TerminalText ('  {0,-39} {1}' -f $row.Name,$row.Value) }
         }
     }
 }
@@ -824,23 +1036,23 @@ function Show-Changes($Before,$After) {
     $count=0
     foreach ($row in (Get-ProfileRows $After)) {
         $key=$row.Group+'/'+$row.Name
-        if (-not $old.ContainsKey($key) -or $old[$key] -cne $row.Value) { Write-Host ('  {0}: {1} -> {2}' -f $row.Name,$old[$key],$row.Value); $count++ }
+        if (-not $old.ContainsKey($key) -or $old[$key] -cne $row.Value) { Write-TerminalText ('  {0}: {1} -> {2}' -f $row.Name,$old[$key],$row.Value); $count++ }
     }
     foreach ($section in @('user','machine','keys','gameFiles','video')) {
         if ((ConvertTo-Json -InputObject $Before[$section] -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $After[$section] -Depth 10 -Compress)) {
             $label=@{user='Player preferences';machine='Audio, HUD and radar';keys='Controls';gameFiles='Custom configs';video='Display and video'}[$section]
-            Write-Host "  $label includes updated settings."
+            Write-TerminalText "  $label includes updated settings."
             $count++
         }
     }
     return $count
 }
 function Show-Issues($Issues) {
-    foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
+    foreach ($issue in $Issues) { Write-TerminalText ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
 }
 function Show-ClipboardResult([string]$Text) {
-    if (Copy-LaunchOptions $Text) { Write-Host 'Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.' }
-    else { Write-Host 'Could not copy launch options to clipboard. Use Copy launch options to retry or copy the line above manually.' -ForegroundColor Yellow }
+    if (Copy-LaunchOptions $Text) { Write-TerminalText 'Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.' }
+    else { Write-TerminalText 'Could not copy launch options to clipboard. Use Copy launch options to retry or copy the line above manually.' -ForegroundColor Yellow }
 }
 function Show-ApplyResult($Profile, $Plan, $Result) {
     $failed=@($Result.Issues | Where-Object {$_.Kind -eq 'Skipped'})
@@ -849,20 +1061,20 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
         else { 'Profile {0} could not be applied' }
     Show-Header ($title -f $Profile.name)
     Show-Issues $Result.Issues
-    if ($Result.Issues.Count) { Write-Host '' }
-    Write-Host 'Launch options:'; Write-Host ''
+    if ($Result.Issues.Count) { Write-TerminalText '' }
+    Write-TerminalText 'Launch options:'; Write-TerminalText ''
     $launch=Get-EffectiveLaunchOptions $Profile $Plan
-    Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
-    Write-Host ''
-    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow; Write-Host '' }
+    Write-TerminalText $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
+    Write-TerminalText ''
+    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-TerminalText 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow; Write-TerminalText '' }
     if ($launch) { Show-ClipboardResult $launch }
     $actions=@()
     if ($failed.Count) { $actions+=@('Retry','Console alternative') }
     if ($launch) { $actions+='Copy launch options' }
     $actions+='Exit'
-    Write-Host ''
-    for ($i=0; $i -lt $actions.Count; $i++) { Write-Host ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
-    Write-Host '  [0] Back to main menu'
+    Write-TerminalText ''
+    for ($i=0; $i -lt $actions.Count; $i++) { Write-TerminalText ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
+    Write-TerminalText '  [0] Back to main menu'
     while ($true) {
         $choice=Read-Choice (0..$actions.Count)
         if ($choice -eq 0) { return 'Back' }
@@ -873,13 +1085,13 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
 }
 function Show-Console($Profile) {
     Show-Header 'Console alternative'
-    Write-Host ('Profile: ' + $Profile.name)
+    Write-TerminalText ('Profile: ' + $Profile.name)
     $path=Join-Path $script:Root ('console\'+(Get-ConsoleFilename $Profile))
     Write-TextFile $path (Get-ConsoleCommands $Profile)
-    Write-Host "`n1. Open $path"
-    Write-Host '2. Copy its commands into the CS2 console in small batches and run them.'
-    Write-Host '3. Check your settings in CS2.'
-    Write-Host "`nSupported settings: crosshair, mouse, audio and controls."
+    Write-TerminalText "`n1. Open $path"
+    Write-TerminalText '2. Copy its commands into the CS2 console in small batches and run them.'
+    Write-TerminalText '3. Check your settings in CS2.'
+    Write-TerminalText "`nSupported settings: crosshair, mouse, audio and controls."
     Wait-Back
 }
 function Invoke-ApplyScreen {
@@ -889,9 +1101,9 @@ function Invoke-ApplyScreen {
     while ($true) {
         $plan=New-ApplyPlan $profile $context
         Show-Header 'Apply profile'; Show-Profile $profile
-        Write-Host ''; Show-Issues $plan.Video.Issues
+        Write-TerminalText ''; Show-Issues $plan.Video.Issues
         $label=if (@($plan.Video.Issues | Where-Object {$_.Kind -eq 'Skipped'}).Count) {'Apply available settings'} else {'Apply'}
-        Write-Host "`n  [1] $label"; Write-Host '  [0] Back'
+        Write-TerminalText "`n  [1] $label"; Write-TerminalText '  [0] Back'
         if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
         $result=Invoke-ApplyPlan $plan
         switch (Show-ApplyResult $profile $plan $result) {
@@ -903,12 +1115,12 @@ function Invoke-ApplyScreen {
 }
 function Read-ProfileName {
     while ($true) {
-        $name=Read-Host 'Profile name (0 to go back)'
-        Write-Host ''
+        $name=Read-TerminalLine 'Profile name (0 to go back)'
+        Write-TerminalText ''
         if ($name -eq '0') { return '' }
         $name=$name.Trim()
-        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-Host 'Enter a profile name (1-100 characters).'; Write-Host ''; continue }
-        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-Host 'A profile with this name already exists.'; Write-Host ''; continue }
+        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-TerminalText 'Enter a profile name (1-100 characters).'; Write-TerminalText ''; continue }
+        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-TerminalText 'A profile with this name already exists.'; Write-TerminalText ''; continue }
         return $name
     }
 }
@@ -922,10 +1134,10 @@ function Export-WithRetry($Pack,$Destination,[switch]$Rename,$PreviousProfile=$n
                 try { $script:Pack=Read-Pack $Destination ''; $script:Root=$Destination } catch { }
             }
             Show-Header 'Config files could not all be updated'
-            Write-Host ('Folder: '+$Destination)
-            Write-Host ''
-            Write-Host 'Check folder permissions and close programs using these files, then retry.'
-            Write-Host "`n  [1] Retry"; Write-Host '  [0] Back to main menu'
+            Write-TerminalText ('Folder: '+$Destination)
+            Write-TerminalText ''
+            Write-TerminalText 'Check folder permissions and close programs using these files, then retry.'
+            Write-TerminalText "`n  [1] Retry"; Write-TerminalText '  [0] Back to main menu'
             if ((Read-Choice @(0,1)) -eq 0) { return $false }
         }
     }
@@ -940,19 +1152,19 @@ function Invoke-RenameScreen([switch]$Profile) {
         $kind='profile'; $currentName=$selected.name
     }
     Show-Header ('Rename ' + $kind)
-    Write-Host ('Current name: ' + $currentName)
-    Write-Host ''; Write-Host '  [0] Back'
+    Write-TerminalText ('Current name: ' + $currentName)
+    Write-TerminalText ''; Write-TerminalText '  [0] Back'
     while ($true) {
-        Write-Host ''
-        $name=(Read-Host ('New ' + $kind + ' name')).Trim()
-        Write-Host ''
+        Write-TerminalText ''
+        $name=(Read-TerminalLine ('New ' + $kind + ' name')).Trim()
+        Write-TerminalText ''
         if ($name -eq '0') { if ($Profile) { continue ChooseRename }; return }
         if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f\x7f]') {
-            Write-Host ('Enter a ' + $kind + ' name (1-100 characters).') -ForegroundColor Yellow
+            Write-TerminalText ('Enter a ' + $kind + ' name (1-100 characters).') -ForegroundColor Yellow
             continue
         }
         if ($Profile -and @($script:Pack.profiles | Where-Object {$_.id -ne $selected.id -and $_.name -eq $name}).Count) {
-            Write-Host 'A profile with this name already exists.' -ForegroundColor Yellow
+            Write-TerminalText 'A profile with this name already exists.' -ForegroundColor Yellow
             continue
         }
         $label=if ($Profile) {'Profile'} else {'Config'}
@@ -966,7 +1178,7 @@ function Invoke-RenameScreen([switch]$Profile) {
             $script:Pack=$next
             Show-Header ($label + ' renamed to ' + $name)
         }
-        Write-Host '  [0] Back to main menu'
+        Write-TerminalText '  [0] Back to main menu'
         [void](Read-Choice @(0))
         return
     }
@@ -984,30 +1196,30 @@ function Invoke-SaveScreen($Update) {
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'profiles.json')) -and -not $script:Pack.profiles.Count) { $destination=Join-Path $destination 'cs2-config' }
     while ($true) {
         if ($Update) {
-            Show-Header 'Review profile changes'; Write-Host ('Profile: '+$name); Write-Host ''
+            Show-Header 'Review profile changes'; Write-TerminalText ('Profile: '+$name); Write-TerminalText ''
             $changes=Show-Changes $existing $profile
-            if (-not $changes) { Write-Host 'Profile is already up to date.'; Wait-Back; return }
-            Write-Host "`n  [1] Save changes"; Write-Host '  [2] View all settings'
+            if (-not $changes) { Write-TerminalText 'Profile is already up to date.'; Wait-Back; return }
+            Write-TerminalText "`n  [1] Save changes"; Write-TerminalText '  [2] View all settings'
         } else {
             Show-Header 'Review new profile'; Show-Profile $profile
-            Write-Host "`nSave to: $destination"
-            Write-Host ''
-            Write-Host '  [1] Create profile'; Write-Host '  [2] Change destination'
+            Write-TerminalText "`nSave to: $destination"
+            Write-TerminalText ''
+            Write-TerminalText '  [1] Create profile'; Write-TerminalText '  [2] Change destination'
         }
-        Write-Host '  [0] Back'
+        Write-TerminalText '  [0] Back'
         switch (Read-Choice @(0,1,2)) {
             0 { continue ChooseSource }
             2 {
                 if ($Update) { Show-Header 'Current settings on this PC'; Show-Profile $profile; Wait-Back }
                 else {
                     Show-Header 'Change destination'
-                    Write-Host ('Current folder: ' + $destination)
-                    Write-Host ''
-                    $path=(Read-Host 'Folder (0 to go back)').Trim().Trim('"')
-                    Write-Host ''
+                    Write-TerminalText ('Current folder: ' + $destination)
+                    Write-TerminalText ''
+                    $path=(Read-TerminalLine 'Folder (0 to go back)').Trim().Trim('"')
+                    Write-TerminalText ''
                     if ($path -ne '0' -and $path) {
                         $candidate=[IO.Path]::GetFullPath($path)
-                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-Host 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
+                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-TerminalText 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
                         else { $destination=$candidate }
                     }
                 }
@@ -1021,14 +1233,14 @@ function Invoke-SaveScreen($Update) {
                 if (-not (Export-WithRetry $next $destination)) { return }
                 $script:Pack=$next; $script:Root=$destination
                 Show-Header $(if ($Update) {'Profile updated'} else {'Profile created'})
-                Write-Host ('Profile: '+$name); Write-Host ('Folder: '+$destination)
-                Write-Host ''
-                Write-Host 'Open apply-config.cmd to apply a profile.'
-                Write-Host ''
-                Write-Host 'Open update-config.cmd to update it.'
-                Write-Host "`n  [1] Publishing instructions"; Write-Host '  [2] Exit'; Write-Host '  [0] Back to main menu'
+                Write-TerminalText ('Profile: '+$name); Write-TerminalText ('Folder: '+$destination)
+                Write-TerminalText ''
+                Write-TerminalText 'Open apply-config.cmd to apply a profile.'
+                Write-TerminalText ''
+                Write-TerminalText 'Open update-config.cmd to update it.'
+                Write-TerminalText "`n  [1] Publishing instructions"; Write-TerminalText '  [2] Exit'; Write-TerminalText '  [0] Back to main menu'
                 switch (Read-Choice @(0,1,2)) {
-                    1 { Show-Header 'Update your config on GitHub'; Write-Host '1. Open your config repository on GitHub.'; Write-Host '2. Choose Add file > Upload files.'; Write-Host '3. Upload the updated config folder contents.'; Write-Host '4. Choose Commit changes.'; Wait-Back }
+                    1 { Show-Header 'Update your config on GitHub'; Write-TerminalText '1. Open your config repository on GitHub.'; Write-TerminalText '2. Choose Add file > Upload files.'; Write-TerminalText '3. Upload the updated config folder contents.'; Write-TerminalText '4. Choose Commit changes.'; Wait-Back }
                     2 { $script:ExitRequested=$true }
                 }
                 return
@@ -1059,7 +1271,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'rename-profile' { Invoke-RenameScreen -Profile }
                 default {
                     Show-Header '' -MainMenu
-                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [4] Rename config'; Write-Host '  [5] Rename profile'; Write-Host '  [0] Exit'
+                    Write-TerminalText '  [1] Apply profile'; Write-TerminalText '  [2] Update profile'; Write-TerminalText '  [3] Create profile'; Write-TerminalText '  [4] Rename config'; Write-TerminalText '  [5] Rename profile'; Write-TerminalText '  [0] Exit'
                     switch (Read-Choice @(0,1,2,3,4,5)) {
                         0 { $script:ExitRequested=$true }
                         1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }
@@ -1069,7 +1281,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                     continue MenuLoop
                 }
             }
-        } catch { Show-Header 'Could not continue'; Write-Host $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
+        } catch { Show-Header 'Could not continue'; Write-TerminalText $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
         $Mode='menu'
     }
 }
@@ -1077,4 +1289,5 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
 $script:CoreSource = [IO.File]::ReadAllText($PSCommandPath)
 $script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(.*?)^# END CORE\r?$').Groups[1].Value.Trim()
 try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT 'eyJzY2hlbWFWZXJzaW9uIjoxLCJuYW1lIjoiY3MyLWNvbmZpZyIsInByb2ZpbGVzIjpbXX0=' }
-catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+catch { Stop-TerminalView; Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Write-Host ''; [void](Read-Host 'Press Enter to close'); exit 1 }
+finally { Stop-TerminalView }
