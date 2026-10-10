@@ -106,7 +106,7 @@ try {
     $outputTask=$process.StandardOutput.ReadToEndAsync(); $errorTask=$process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'CMD smoke test did not exit.' }
     $stdout=$outputTask.Result; $stderr=$errorTask.Result
-    Assert ($process.ExitCode -eq 0 -and $stdout -match 'Choose option below:' -and -not $stderr) ('CMD smoke test failed: '+$stdout+$stderr)
+    Assert ($process.ExitCode -eq 0 -and $stdout -match 'CS2 CONFIG\r?\n\r?\nConfig name: Test config\r?\n\r?\nSelect an option below:' -and -not $stderr) ('CMD smoke test failed: '+$stdout+$stderr)
     $choices=New-Object 'Collections.Generic.Queue[string]'; $choices.Enqueue('');$choices.Enqueue('9');$choices.Enqueue('1')
     function Read-Host { param($Prompt); return $choices.Dequeue() }
     Assert ((Read-Choice @(0,1)) -eq 1 -and $choices.Count -eq 0) 'Blank input selected a default.'

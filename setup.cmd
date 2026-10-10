@@ -24,7 +24,7 @@ param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
 # BEGIN CORE
 # Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
-$TOOL_VERSION = '2.0.2'
+$TOOL_VERSION = '2.0.3'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 function ConvertTo-Map($Value) {
     if ($null -eq $Value) { return $null }
@@ -612,13 +612,47 @@ public static class CS2TerminalWindow {
     [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out Rect rect, int size);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
-    public static void SetHeight(int pixels) {
+    public static int SetHeight(int pixels) {
         IntPtr window = GetConsoleWindow();
-        Rect rect;
         // Pseudoconsole hosts expose a hidden handle, not their visible terminal.
-        if (window == IntPtr.Zero || !IsWindowVisible(window) || !GetWindowRect(window, out rect)) return;
-        SetWindowPos(window, IntPtr.Zero, 0, 0, rect.Right - rect.Left, pixels, 0x0002 | 0x0004 | 0x0010);
+        if (window == IntPtr.Zero || !IsWindowVisible(window)) return 0;
+        return Resize(window, pixels);
+    }
+    public static int Resize(IntPtr window, int pixels) {
+        IntPtr previous = IntPtr.Zero;
+        try {
+            // Use physical pixels even when the PowerShell host is DPI-unaware.
+            try { previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
+            Rect rect, client, visible;
+            if (!GetWindowRect(window, out rect)) return 0;
+            int width = rect.Right - rect.Left;
+            if (GetClientRect(window, out client) && Console.WindowHeight > 0) {
+                double rowHeight = (double)(client.Bottom - client.Top) / Console.WindowHeight;
+                if (rowHeight > 0) {
+                    int rows = (int)Math.Ceiling(pixels / rowHeight);
+                    if (Console.BufferHeight < rows) Console.BufferHeight = rows;
+                }
+            }
+            int requested = pixels;
+            int actual = 0;
+            for (int attempt = 0; attempt < 3; attempt++) {
+                if (!SetWindowPos(window, IntPtr.Zero, 0, 0, width, requested, 0x0002 | 0x0004 | 0x0010)) return actual;
+                // DWM bounds exclude the invisible resize border and are physical pixels.
+                if (DwmGetWindowAttribute(window, 9, out visible, Marshal.SizeOf(typeof(Rect))) == 0)
+                    actual = visible.Bottom - visible.Top;
+                else if (GetWindowRect(window, out rect)) actual = rect.Bottom - rect.Top;
+                else return 0;
+                if (Math.Abs(actual - pixels) <= 1) break;
+                requested += pixels - actual;
+            }
+            return actual;
+        } finally {
+            if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous);
+        }
     }
 }
 '@
@@ -628,16 +662,21 @@ function Initialize-Terminal {
     try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { }
     try {
         Initialize-TerminalWindowApi
-        [CS2TerminalWindow]::SetHeight(530)
+        [void][CS2TerminalWindow]::SetHeight(530)
     } catch { } # Some terminal hosts manage their own window dimensions.
 }
-function Show-Header($Title) {
+function Show-Header($Title, [switch]$MainMenu) {
     if (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
+    if ($MainMenu) {
+        Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host ('Config name: ' + $script:Pack.name)
+    }
     Write-Host ''; Write-Host $Title -ForegroundColor White; Write-Host ''
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
-        $value=Read-Host 'Choose an option'
+        $value=Read-Host 'Select an option'
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
         Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow
@@ -897,7 +936,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'create' { Invoke-SaveScreen $false }
                 'update' { Invoke-SaveScreen $true }
                 default {
-                    Show-Header 'Choose option below:'
+                    Show-Header 'Select an option below:' -MainMenu
                     Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'; Write-Host ''
                     switch (Read-Choice @(0,1,2,3)) {
                         0 { $script:ExitRequested=$true }
