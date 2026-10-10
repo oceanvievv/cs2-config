@@ -84,6 +84,7 @@ function Initialize-Terminal {
     } catch { } # Some terminal hosts manage their own window dimensions.
 }
 function Show-Header($Title, [switch]$MainMenu) {
+    if (-not [Console]::IsOutputRedirected) { try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { } }
     if (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
     if ($MainMenu) {
         Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
@@ -222,7 +223,7 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
     $launch=Get-EffectiveLaunchOptions $Profile $Plan
     Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
     Write-Host ''
-    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
+    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow; Write-Host '' }
     if ($launch) { Show-ClipboardResult $launch }
     $actions=@()
     if ($failed.Count) { $actions+=@('Retry','Console alternative') }
@@ -272,16 +273,17 @@ function Invoke-ApplyScreen {
 function Read-ProfileName {
     while ($true) {
         $name=Read-Host 'Profile name (0 to go back)'
+        Write-Host ''
         if ($name -eq '0') { return '' }
         $name=$name.Trim()
-        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-Host 'Enter a profile name (1-100 characters).'; continue }
-        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-Host 'A profile with this name already exists.'; continue }
+        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-Host 'Enter a profile name (1-100 characters).'; Write-Host ''; continue }
+        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-Host 'A profile with this name already exists.'; Write-Host ''; continue }
         return $name
     }
 }
-function Export-WithRetry($Pack,$Destination) {
+function Export-WithRetry($Pack,$Destination,[switch]$Rename,$PreviousProfile=$null) {
     while ($true) {
-        try { Export-Pack $Pack $Destination; return $true }
+        try { Export-Pack $Pack $Destination -Rename:$Rename -PreviousProfile $PreviousProfile; return $true }
         catch {
             # The JSON may have been saved before a derived CMD failed. Keep memory
             # consistent with that source of truth, including after returning to menu.
@@ -290,10 +292,53 @@ function Export-WithRetry($Pack,$Destination) {
             }
             Show-Header 'Config files could not all be updated'
             Write-Host ('Folder: '+$Destination)
+            Write-Host ''
             Write-Host 'Check folder permissions and close programs using these files, then retry.'
             Write-Host "`n  [1] Retry"; Write-Host '  [0] Back to main menu'
             if ((Read-Choice @(0,1)) -eq 0) { return $false }
         }
+    }
+}
+function Invoke-RenameScreen([switch]$Profile) {
+    :ChooseRename while ($true) {
+    $selected=$null
+    $kind='config'
+    $currentName=$script:Pack.name
+    if ($Profile) {
+        $selected=Select-Profile 'rename'; if ($null -eq $selected) { return }
+        $kind='profile'; $currentName=$selected.name
+    }
+    Show-Header ('Rename ' + $kind)
+    Write-Host ('Current name: ' + $currentName)
+    Write-Host ''; Write-Host '  [0] Back'
+    while ($true) {
+        Write-Host ''
+        $name=(Read-Host ('New ' + $kind + ' name')).Trim()
+        Write-Host ''
+        if ($name -eq '0') { if ($Profile) { continue ChooseRename }; return }
+        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f\x7f]') {
+            Write-Host ('Enter a ' + $kind + ' name (1-100 characters).') -ForegroundColor Yellow
+            continue
+        }
+        if ($Profile -and @($script:Pack.profiles | Where-Object {$_.id -ne $selected.id -and $_.name -eq $name}).Count) {
+            Write-Host 'A profile with this name already exists.' -ForegroundColor Yellow
+            continue
+        }
+        $label=if ($Profile) {'Profile'} else {'Config'}
+        if ($name -ceq $currentName) { Show-Header ($label + ' name is unchanged') }
+        else {
+            $next=Copy-Data $script:Pack
+            if ($Profile) {
+                foreach ($item in $next.profiles) { if ($item.id -eq $selected.id) { $item.name=$name } }
+            } else { $next.name=$name }
+            if (-not (Export-WithRetry $next $script:Root -Rename -PreviousProfile $selected)) { return }
+            $script:Pack=$next
+            Show-Header ($label + ' renamed to ' + $name)
+        }
+        Write-Host '  [0] Back to main menu'
+        [void](Read-Choice @(0))
+        return
+    }
     }
 }
 function Invoke-SaveScreen($Update) {
@@ -308,13 +353,14 @@ function Invoke-SaveScreen($Update) {
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'profiles.json')) -and -not $script:Pack.profiles.Count) { $destination=Join-Path $destination 'cs2-config' }
     while ($true) {
         if ($Update) {
-            Show-Header 'Review profile changes'; Write-Host ('Profile: '+$name)
+            Show-Header 'Review profile changes'; Write-Host ('Profile: '+$name); Write-Host ''
             $changes=Show-Changes $existing $profile
             if (-not $changes) { Write-Host 'Profile is already up to date.'; Wait-Back; return }
             Write-Host "`n  [1] Save changes"; Write-Host '  [2] View all settings'
         } else {
             Show-Header 'Review new profile'; Show-Profile $profile
             Write-Host "`nSave to: $destination"
+            Write-Host ''
             Write-Host '  [1] Create profile'; Write-Host '  [2] Change destination'
         }
         Write-Host '  [0] Back'
@@ -325,7 +371,9 @@ function Invoke-SaveScreen($Update) {
                 else {
                     Show-Header 'Change destination'
                     Write-Host ('Current folder: ' + $destination)
+                    Write-Host ''
                     $path=(Read-Host 'Folder (0 to go back)').Trim().Trim('"')
+                    Write-Host ''
                     if ($path -ne '0' -and $path) {
                         $candidate=[IO.Path]::GetFullPath($path)
                         if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-Host 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
@@ -338,12 +386,14 @@ function Invoke-SaveScreen($Update) {
                 if ($Update) {
                     for ($i=0;$i -lt $next.profiles.Count;$i++) { if ($next.profiles[$i].id -eq $profile.id) { $next.profiles[$i]=$profile } }
                 } else { $next.profiles=@($next.profiles)+@($profile) }
-                if (-not $script:Pack.profiles.Count) { $next.name=Split-Path -Leaf $destination }
+                if (-not $script:Pack.profiles.Count -and -not (Test-Path -LiteralPath (Join-Path $destination 'profiles.json'))) { $next.name=Split-Path -Leaf $destination }
                 if (-not (Export-WithRetry $next $destination)) { return }
                 $script:Pack=$next; $script:Root=$destination
                 Show-Header $(if ($Update) {'Profile updated'} else {'Profile created'})
                 Write-Host ('Profile: '+$name); Write-Host ('Folder: '+$destination)
+                Write-Host ''
                 Write-Host 'Open apply-config.cmd to apply a profile.'
+                Write-Host ''
                 Write-Host 'Open update-config.cmd to update it.'
                 Write-Host "`n  [1] Publishing instructions"; Write-Host '  [2] Exit'; Write-Host '  [0] Back to main menu'
                 switch (Read-Choice @(0,1,2)) {
@@ -374,12 +424,16 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'apply' { Invoke-ApplyScreen }
                 'create' { Invoke-SaveScreen $false }
                 'update' { Invoke-SaveScreen $true }
+                'rename' { Invoke-RenameScreen }
+                'rename-profile' { Invoke-RenameScreen -Profile }
                 default {
                     Show-Header '' -MainMenu
-                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'
-                    switch (Read-Choice @(0,1,2,3)) {
+                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [4] Rename config'; Write-Host '  [5] Rename profile'; Write-Host '  [0] Exit'
+                    switch (Read-Choice @(0,1,2,3,4,5)) {
                         0 { $script:ExitRequested=$true }
                         1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }
+                        4 { $Mode='rename' }
+                        5 { $Mode='rename-profile' }
                     }
                     continue MenuLoop
                 }

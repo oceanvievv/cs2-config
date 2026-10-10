@@ -126,6 +126,7 @@ try {
             @{Partial=$false;Launch=$false;Answers=@('1');Action='Exit';Numbers='1,0'},
             @{Partial=$true;Launch=$false;Answers=@('1');Action='Retry';Numbers='1,2,3,0'},
             @{Partial=$false;Launch=$true;Answers=@('0');Action='Back';Numbers='1,2,0'}
+            @{Partial=$false;Launch=$true;Adjusted=$true;Answers=@('0');Action='Back';Numbers='1,2,0'}
         )
         foreach ($case in $cases) {
             $lines.Clear(); $colors.Clear()
@@ -135,6 +136,7 @@ try {
             if (-not $case.Launch) { $screenProfile.launchOptions='' }
             $screenResult=@{Saved=@('Controls');Issues=@()}
             if ($case.Partial) { $screenResult.Issues=@(@{Kind='Skipped';Setting='Audio';Reason='Test failure'}) }
+            if ($case.Adjusted) { $screenResult.Issues=@(@{Kind='Adjusted';Setting='Refresh Rate';Reason='Using 144 Hz'}) }
             $action=Show-ApplyResult $screenProfile (New-ApplyPlan $screenProfile $context $hardware) $screenResult
             Assert ($action -eq $case.Action -and $answers.Count -eq 0) 'Result menu selected the wrong action.'
             $numbers=@($lines | ForEach-Object { if ($_ -match '^  \[(\d+)\]') { $matches[1] } })
@@ -148,6 +150,10 @@ try {
             if ($case.Launch) {
                 $copyIndex=$lines.IndexOf('Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.')
                 Assert ($copyIndex -ge 0 -and $colors[$copyIndex] -eq '') 'Clipboard success text or color is incorrect.'
+                if ($case.Adjusted) {
+                    $warningIndex=$lines.IndexOf('Check any display parameters in this line before pasting.')
+                    Assert ($warningIndex -ge 0 -and $copyIndex -eq $warningIndex+2 -and $lines[$warningIndex+1] -eq '') 'Display warning and clipboard feedback run together.'
+                }
             }
             $expected=if ($case.Partial) { 'Profile '+$profile.name+' partially applied' } else { 'Profile '+$profile.name+' successfully applied' }
             Assert ($lines.Contains($expected)) 'Result heading does not describe the outcome.'
@@ -165,6 +171,52 @@ try {
     foreach ($inputValue in @('1','1','0','0','0')) { $choices.Enqueue($inputValue) }
     Start-ConfigTool 'menu' $packRoot '' 6>$null
     Assert ($choices.Count -eq 0) 'Menu navigation did not return through profile selection.'
+    $beforeRename=[IO.File]::ReadAllText((Join-Path $packRoot 'profiles.json'))
+    foreach ($inputValue in @('4','0','0')) { $choices.Enqueue($inputValue) }
+    Start-ConfigTool 'menu' $packRoot '' 6>$null
+    Assert ($choices.Count -eq 0 -and [IO.File]::ReadAllText((Join-Path $packRoot 'profiles.json')) -ceq $beforeRename) 'Cancelling rename changed the config.'
+    $unchangedProfiles=ConvertTo-Json -InputObject $script:Pack.profiles -Depth 50 -Compress
+    Write-TextFile (Join-Path $packRoot 'README.md') "# Test config`r`n`r`nCustom instructions to preserve."
+    Write-TextFile (Join-Path $packRoot 'README.ru.md') "# Test config`r`n`r`nTranslated instructions to preserve."
+    $renamedName=([string][char]0x041C)+'y config & friends'
+    foreach ($inputValue in @('4','',([string][char]27),('x'*101),('  '+$renamedName+'  '),'0','0')) { $choices.Enqueue($inputValue) }
+    Start-ConfigTool 'menu' $packRoot '' 6>$null
+    $renamedPack=Read-Pack $packRoot ''
+    Assert ($choices.Count -eq 0 -and $renamedPack.name -ceq $renamedName -and $script:Pack.name -ceq $renamedName) 'Rename validation, whitespace trimming or menu state failed.'
+    Assert ($script:Root -eq $packRoot -and (Test-Path -LiteralPath $packRoot)) 'Rename moved the config folder.'
+    Assert ((ConvertTo-Json -InputObject $renamedPack.profiles -Depth 50 -Compress) -ceq $unchangedProfiles) 'Rename changed profiles or their settings.'
+    Assert ([IO.File]::ReadAllText((Join-Path $packRoot 'README.md')) -ceq ("# $renamedName`r`n`r`nCustom instructions to preserve.")) 'Rename replaced custom README contents.'
+    Assert ([IO.File]::ReadAllText((Join-Path $packRoot 'README.ru.md')) -ceq ("# $renamedName`r`n`r`nTranslated instructions to preserve.")) 'Rename did not update the translated README heading.'
+    foreach ($file in @('apply-config.cmd','update-config.cmd','setup.cmd')) {
+        $text=[IO.File]::ReadAllText((Join-Path $packRoot $file))
+        $data=[regex]::Match($text, "(?m)^try \{ Start-ConfigTool .* '([A-Za-z0-9+/=]+)' \}").Groups[1].Value
+        $embeddedPack=Read-Pack (Join-Path $fixture 'standalone-renamed') $data
+        Assert ($embeddedPack.name -ceq $renamedName) ('Rename left stale embedded data in '+$file)
+    }
+    $beforeProfileRename=[IO.File]::ReadAllText((Join-Path $packRoot 'profiles.json'))
+    foreach ($inputValue in @('5','1','0','0','0')) { $choices.Enqueue($inputValue) }
+    Start-ConfigTool 'menu' $packRoot '' 6>$null
+    Assert ($choices.Count -eq 0 -and [IO.File]::ReadAllText((Join-Path $packRoot 'profiles.json')) -ceq $beforeProfileRename) 'Back from profile rename changed data or skipped profile selection.'
+    $oldProfile=Copy-Data $script:Pack.profiles[0]
+    $oldFile=Get-ConsoleFilename $oldProfile
+    $link='**'+$oldProfile.name+'**: [commands](console/'+[Uri]::EscapeDataString($oldFile)+')'
+    foreach ($doc in @('README.md','README.ru.md')) { Write-TextFile (Join-Path $packRoot $doc) ("# $renamedName`r`n`r`nKeep these instructions.`r`n"+$link) }
+    $profileName=([string][char]0x041F)+'rofile & friends'
+    foreach ($inputValue in @('5','1',$script:Pack.profiles[1].name.ToUpperInvariant(),(' '+$profileName+' '),'0','0')) { $choices.Enqueue($inputValue) }
+    Start-ConfigTool 'menu' $packRoot '' 6>$null
+    $profilePack=Read-Pack $packRoot ''
+    Assert ($choices.Count -eq 0 -and $profilePack.profiles[0].name -ceq $profileName -and $profilePack.name -ceq $renamedName) 'Profile rename accepted a duplicate or changed the config name.'
+    $newFile=Get-ConsoleFilename $profilePack.profiles[0]
+    Assert ((Test-Path -LiteralPath (Join-Path $packRoot ('console\'+$newFile))) -and -not (Test-Path -LiteralPath (Join-Path $packRoot ('console\'+$oldFile)))) 'Profile rename left a stale generated console file.'
+    foreach ($doc in @('README.md','README.ru.md')) {
+        $text=[IO.File]::ReadAllText((Join-Path $packRoot $doc))
+        Assert ($text.Contains('Keep these instructions.') -and $text.Contains('**'+$profileName+'**') -and $text.Contains([Uri]::EscapeDataString($newFile))) 'Profile rename lost README text or left an old link.'
+    }
+    $profilePack.profiles[0].name=$oldProfile.name
+    Assert ((ConvertTo-Json -InputObject $profilePack.profiles -Depth 50 -Compress) -ceq $unchangedProfiles) 'Profile rename changed settings, IDs or another profile.'
+    foreach ($inputValue in @('5','1',$profileName.ToUpperInvariant(),'0','0')) { $choices.Enqueue($inputValue) }
+    Start-ConfigTool 'menu' $packRoot '' 6>$null
+    Assert ($choices.Count -eq 0 -and $script:Pack.profiles[0].name -ceq $profileName.ToUpperInvariant()) 'Changing only profile name casing failed.'
     Write-Output 'Profile checks passed: capture, explicit choice, isolation, standalone export, first-run paths, GPU identity, partial writes and refresh fallback.'
 } finally {
     $resolved=[IO.Path]::GetFullPath($fixture)

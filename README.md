@@ -65,6 +65,17 @@ To upgrade the utility inside an existing profile pack, download the latest `set
 into that pack's folder and create or update a profile with it. This rebuilds its
 launchers. Profile updates use the embedded utility and do not download code automatically.
 
+## Rename the config
+
+Choose **Rename config** in the main menu and enter the new name. Names can contain
+spaces and non-Latin characters. Enter `0` to go back. The new name is saved in
+`profiles.json`, all three CMD launchers, README headings and the window title.
+Profile names and settings, the folder and the GitHub repository keep their names.
+
+Choose **Rename profile** to rename an explicitly selected profile. Its settings and
+identifier stay unchanged; console filenames and README links are updated. Profile
+names must remain unique. Existing README instructions are preserved when renaming.
+
 ## Console alternative
 
 Open your config's README and follow the link for the desired profile. Paste commands
