@@ -24,7 +24,7 @@ param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
 # BEGIN CORE
 # Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
-$TOOL_VERSION = '2.0.3'
+$TOOL_VERSION = '2.0.4'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 function ConvertTo-Map($Value) {
     if ($null -eq $Value) { return $null }
@@ -609,6 +609,17 @@ using System.Runtime.InteropServices;
 public static class CS2TerminalWindow {
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Coord { public short X, Y; }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct ConsoleFont {
+        public uint Size, Index;
+        public Coord Cell;
+        public int Family, Weight;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string Face;
+    }
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int handle);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern bool SetCurrentConsoleFontEx(IntPtr output, bool maximum, ref ConsoleFont font);
     [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
@@ -616,10 +627,20 @@ public static class CS2TerminalWindow {
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out Rect rect, int size);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    public static bool SetFont() {
+        ConsoleFont font = new ConsoleFont();
+        font.Size = (uint)Marshal.SizeOf(typeof(ConsoleFont));
+        font.Cell.Y = 16;
+        font.Family = 54;
+        font.Weight = 400;
+        font.Face = "Consolas";
+        return SetCurrentConsoleFontEx(GetStdHandle(-11), false, ref font);
+    }
     public static int SetHeight(int pixels) {
         IntPtr window = GetConsoleWindow();
         // Pseudoconsole hosts expose a hidden handle, not their visible terminal.
         if (window == IntPtr.Zero || !IsWindowVisible(window)) return 0;
+        SetFont();
         return Resize(window, pixels);
     }
     public static int Resize(IntPtr window, int pixels) {
