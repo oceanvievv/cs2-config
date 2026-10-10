@@ -1,15 +1,31 @@
+function Initialize-TerminalWindowApi {
+    if ('CS2TerminalWindow' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CS2TerminalWindow {
+    [StructLayout(LayoutKind.Sequential)]
+    struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    public static void SetHeight(int pixels) {
+        IntPtr window = GetConsoleWindow();
+        Rect rect;
+        // Pseudoconsole hosts expose a hidden handle, not their visible terminal.
+        if (window == IntPtr.Zero || !IsWindowVisible(window) || !GetWindowRect(window, out rect)) return;
+        SetWindowPos(window, IntPtr.Zero, 0, 0, rect.Right - rect.Left, pixels, 0x0002 | 0x0004 | 0x0010);
+    }
+}
+'@
+}
 function Initialize-Terminal {
     if ([Console]::IsOutputRedirected -or [Console]::IsInputRedirected) { return }
     try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { }
     try {
-        $ui = $Host.UI.RawUI
-        $window = $ui.WindowSize
-        $height = [Math]::Min([int][Math]::Ceiling($window.Height * 2.5), $ui.MaxPhysicalWindowSize.Height)
-        if ($height -le $window.Height) { return }
-        $buffer = $ui.BufferSize
-        if ($buffer.Height -lt $height) { $buffer.Height = $height; $ui.BufferSize = $buffer }
-        $window.Height = $height
-        $ui.WindowSize = $window
+        Initialize-TerminalWindowApi
+        [CS2TerminalWindow]::SetHeight(530)
     } catch { } # Some terminal hosts manage their own window dimensions.
 }
 function Show-Header($Title) {
