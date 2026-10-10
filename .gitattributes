@@ -1,3 +1,4 @@
-# Store downloadable CMD files byte-for-byte, including CRLF.
-*.cmd -text
+# Store the portable executable and bundled test library byte-for-byte.
 *.ps1 text eol=crlf
+*.exe binary
+*.dll binary

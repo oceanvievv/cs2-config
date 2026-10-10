@@ -1,6 +1,6 @@
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
-$names=@('storage','capture','platform','apply','export','terminal','ui')
+$names=@('storage','capture','platform','apply','launcher-assets','executable','export','spectre-assets','terminal','ui')
 $parts=@($names | ForEach-Object {[IO.File]::ReadAllText((Join-Path $repo "src\$_.ps1"))})
 $script:CoreSource=$parts -join "`r`n"
 foreach ($part in $parts) { . ([scriptblock]::Create($part)) }
@@ -84,8 +84,7 @@ try {
     Export-Pack $loaded $packRoot
     $after=Read-Pack $packRoot ''
     Assert ((ConvertTo-Json -InputObject $after.profiles[1] -Depth 30 -Compress) -ceq $before) 'Updating one profile changed another.'
-    $launcher=[IO.File]::ReadAllText((Join-Path $packRoot 'apply-config.cmd'))
-    $scriptText=$launcher.Substring($launcher.IndexOf('::PS1::')+7)
+    $scriptText=Read-ExecutableSource (Join-Path $packRoot 'cs2-config.exe')
     $tokens=$null; $errors=$null
     [void][Management.Automation.Language.Parser]::ParseInput($scriptText,[ref]$tokens,[ref]$errors)
     Assert ($errors.Count -eq 0) 'Generated launcher failed PowerShell parsing.'
@@ -97,8 +96,8 @@ try {
     Assert ($standalone.profiles.Count -eq 2 -and $standalone.profiles[0].user.sensitivity -eq '3.5') 'Standalone CMD has stale or missing profiles.'
     # Run the actual CMD wrapper with redirected input, including a Unicode path.
     $start=New-Object Diagnostics.ProcessStartInfo
-    $start.FileName=$env:ComSpec
-    $start.Arguments='/d /c ""'+(Join-Path $packRoot 'apply-config.cmd')+'" -Mode menu"'
+    $start.FileName=Join-Path $packRoot 'cs2-config.exe'
+    $start.Arguments='-Mode menu'
     $start.UseShellExecute=$false; $start.CreateNoWindow=$true
     $start.RedirectStandardInput=$true; $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
     $process=[Diagnostics.Process]::Start($start)
@@ -108,6 +107,15 @@ try {
     $stdout=$outputTask.Result; $stderr=$errorTask.Result
     # The STA console host omits blank lines and Read-Host prompts when redirected.
     Assert ($process.ExitCode -eq 0 -and $stdout -match 'CS2 CONFIG\s+Config name: Test config\s+\[1\] Apply profile' -and $stdout -notmatch 'Select an option below' -and -not $stderr) ('CMD smoke test failed: '+$stdout+$stderr)
+    # The running portable app must be able to replace its own package on save.
+    $process=[Diagnostics.Process]::Start($start)
+    foreach($answer in @('4','Portable rename test','0','4','Test config','0','0')) { $process.StandardInput.WriteLine($answer) }
+    $process.StandardInput.Close()
+    $outputTask=$process.StandardOutput.ReadToEndAsync(); $errorTask=$process.StandardError.ReadToEndAsync()
+    if(-not $process.WaitForExit(15000)){ $process.Kill(); throw 'Portable rename test timed out.' }
+    $stdout=$outputTask.Result; $stderr=$errorTask.Result
+    Assert ($stdout -match 'Config renamed to Portable rename test' -and $stdout -match 'Config renamed to Test config' -and -not $stderr) ('Executable could not update itself: '+$stdout+$stderr)
+    Assert ((Read-Pack $packRoot '').name -ceq 'Test config') 'Portable rename failed to save the config name.'
     Assert (-not (Copy-LaunchOptions '')) 'Empty launch options should not replace the clipboard.'
     & {
         function Copy-LaunchOptions { return $false }
@@ -187,8 +195,8 @@ try {
     Assert ((ConvertTo-Json -InputObject $renamedPack.profiles -Depth 50 -Compress) -ceq $unchangedProfiles) 'Rename changed profiles or their settings.'
     Assert ([IO.File]::ReadAllText((Join-Path $packRoot 'README.md')) -ceq ("# $renamedName`r`n`r`nCustom instructions to preserve.")) 'Rename replaced custom README contents.'
     Assert ([IO.File]::ReadAllText((Join-Path $packRoot 'README.ru.md')) -ceq ("# $renamedName`r`n`r`nTranslated instructions to preserve.")) 'Rename did not update the translated README heading.'
-    foreach ($file in @('apply-config.cmd','update-config.cmd','setup.cmd')) {
-        $text=[IO.File]::ReadAllText((Join-Path $packRoot $file))
+    foreach ($file in @('cs2-config.exe')) {
+        $text=Read-ExecutableSource (Join-Path $packRoot $file)
         $data=[regex]::Match($text, "(?m)^try \{ Start-ConfigTool .* '([A-Za-z0-9+/=]+)' \}").Groups[1].Value
         $embeddedPack=Read-Pack (Join-Path $fixture 'standalone-renamed') $data
         Assert ($embeddedPack.name -ceq $renamedName) ('Rename left stale embedded data in '+$file)

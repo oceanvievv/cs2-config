@@ -1,12 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 # Load only the pure capture function, never run setup against the user's Steam files.
-$source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\setup.cmd'))
-$marker = '::' + 'PS1' + '::'
+$source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\capture.ps1'))
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput(
-    $source.Substring($source.IndexOf($marker) + $marker.Length),
+    $source,
     [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
 $function = $ast.Find({ param($node)

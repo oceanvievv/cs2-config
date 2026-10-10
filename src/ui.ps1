@@ -86,7 +86,7 @@ function Initialize-Terminal {
 }
 function Show-Header($Title, [switch]$MainMenu) {
     if (-not [Console]::IsOutputRedirected) { try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { } }
-    if ($script:TerminalViewActive) { [CS2TerminalView]::Begin([string]$Title) }
+    if ($script:TerminalViewActive) { Start-TerminalScreen ([string]$Title) }
     elseif (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
     if ($MainMenu) {
         Write-TerminalText 'CS2 CONFIG' -ForegroundColor Cyan
@@ -97,6 +97,7 @@ function Show-Header($Title, [switch]$MainMenu) {
     if ($Title) { Write-TerminalText $Title -ForegroundColor White; Write-TerminalText '' }
 }
 function Read-Choice([int[]]$Allowed) {
+    if ($script:TerminalViewActive) { return Read-TerminalChoice $Allowed }
     while ($true) {
         Write-TerminalText ''
         $value=Read-TerminalLine 'Enter an option'
@@ -107,6 +108,19 @@ function Read-Choice([int[]]$Allowed) {
     }
 }
 function Wait-Back { Write-TerminalText ''; [void](Read-TerminalLine 'Press Enter to go back') }
+function Show-ProfileDetails($Profile) {
+    Show-Header 'Profile settings'
+    Show-Profile $Profile
+    Write-TerminalOption '  [0] Back'
+    [void](Read-Choice @(0))
+}
+function Show-ProfileSummary($Profile) {
+    Write-TerminalText ('Profile: '+$Profile.name)
+    Write-TerminalText ''
+    foreach ($row in (Get-ProfileRows $Profile | Where-Object {$_.Group -eq 'Display'})) {
+        Write-TerminalText ('  {0,-20} {1}' -f $row.Name,$row.Value)
+    }
+}
 function Select-Profile($Purpose) {
     Show-Header ('Choose a profile to ' + $Purpose)
     if (-not $script:Pack.profiles.Count) { Write-TerminalText 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
@@ -259,11 +273,13 @@ function Invoke-ApplyScreen {
     $context=Get-Context; if ($null -eq $context) { return }
     while ($true) {
         $plan=New-ApplyPlan $profile $context
-        Show-Header 'Apply profile'; Show-Profile $profile
+        Show-Header 'Apply profile'; Show-ProfileSummary $profile
         Write-TerminalText ''; Show-Issues $plan.Video.Issues
         $label=if (@($plan.Video.Issues | Where-Object {$_.Kind -eq 'Skipped'}).Count) {'Apply available settings'} else {'Apply'}
-        Write-TerminalOption "`n  [1] $label"; Write-TerminalOption '  [0] Back'
-        if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
+        Write-TerminalOption "`n  [1] $label"; Write-TerminalOption '  [2] View all settings'; Write-TerminalOption '  [0] Back'
+        $choice=Read-Choice @(0,1,2)
+        if ($choice -eq 0) { continue ChooseProfile }
+        if ($choice -eq 2) { Show-ProfileDetails $profile; continue }
         $result=Invoke-ApplyPlan $plan
         switch (Show-ApplyResult $profile $plan $result) {
             'Back' { return }; 'Exit' { $script:ExitRequested=$true; return }
@@ -360,16 +376,17 @@ function Invoke-SaveScreen($Update) {
             if (-not $changes) { Write-TerminalText 'Profile is already up to date.'; Wait-Back; return }
             Write-TerminalOption "`n  [1] Save changes"; Write-TerminalOption '  [2] View all settings'
         } else {
-            Show-Header 'Review new profile'; Show-Profile $profile
+            Show-Header 'Review new profile'; Show-ProfileSummary $profile
             Write-TerminalText "`nSave to: $destination"
             Write-TerminalText ''
-            Write-TerminalOption '  [1] Create profile'; Write-TerminalOption '  [2] Change destination'
+            Write-TerminalOption '  [1] Create profile'; Write-TerminalOption '  [2] Change destination'; Write-TerminalOption '  [3] View all settings'
         }
         Write-TerminalOption '  [0] Back'
-        switch (Read-Choice @(0,1,2)) {
+        $allowed=if ($Update) {@(0,1,2)} else {@(0,1,2,3)}
+        switch (Read-Choice $allowed) {
             0 { continue ChooseSource }
             2 {
-                if ($Update) { Show-Header 'Current settings on this PC'; Show-Profile $profile; Wait-Back }
+                if ($Update) { Show-ProfileDetails $profile }
                 else {
                     Show-Header 'Change destination'
                     Write-TerminalText ('Current folder: ' + $destination)
@@ -378,11 +395,12 @@ function Invoke-SaveScreen($Update) {
                     Write-TerminalText ''
                     if ($path -ne '0' -and $path) {
                         $candidate=[IO.Path]::GetFullPath($path)
-                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-TerminalText 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
+                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-TerminalText 'That folder already contains a config. Open its cs2-config.exe to add a profile.'; Wait-Back }
                         else { $destination=$candidate }
                     }
                 }
             }
+            3 { Show-ProfileDetails $profile }
             1 {
                 $next=Copy-Data $script:Pack
                 if ($Update) {
@@ -394,9 +412,9 @@ function Invoke-SaveScreen($Update) {
                 Show-Header $(if ($Update) {'Profile updated'} else {'Profile created'})
                 Write-TerminalText ('Profile: '+$name); Write-TerminalText ('Folder: '+$destination)
                 Write-TerminalText ''
-                Write-TerminalText 'Open apply-config.cmd to apply a profile.'
+                Write-TerminalText 'Open cs2-config.exe and choose Apply profile.'
                 Write-TerminalText ''
-                Write-TerminalText 'Open update-config.cmd to update it.'
+                Write-TerminalText 'Choose Update profile to update it.'
                 Write-TerminalOption "`n  [1] Publishing instructions"; Write-TerminalOption '  [2] Exit'; Write-TerminalOption '  [0] Back to main menu'
                 switch (Read-Choice @(0,1,2)) {
                     1 { Show-Header 'Update your config on GitHub'; Write-TerminalText '1. Open your config repository on GitHub.'; Write-TerminalText '2. Choose Add file > Upload files.'; Write-TerminalText '3. Upload the updated config folder contents.'; Write-TerminalText '4. Choose Commit changes.'; Wait-Back }

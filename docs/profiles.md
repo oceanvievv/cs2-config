@@ -22,7 +22,7 @@ initialization, while independent player settings can still be written.
 Files are written through temporary files in their destination directories, replaced
 without retaining backups, and read back. Pack export prepares outputs before writing.
 `profiles.json` remains authoritative if rebuilding a derived launcher fails; retry
-export to repair it. A stale standalone CMD cannot discover newer profiles.
+export to repair it. A stale standalone executable cannot discover newer profiles.
 
 The startup overlay runs after custom autoexec commands so newly captured settings
 take precedence over stale CFG values. Crosshair size commands precede
