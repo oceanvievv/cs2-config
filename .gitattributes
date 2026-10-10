@@ -1,4 +1,3 @@
-# setup.cmd is downloaded raw - by a pack updating its own generator, and from the
-# releases page - so what is stored here is what runs. cmd.exe misparses a batch file with
-# LF-only line endings, and git would normalise them away on commit without this line.
+# Store downloadable CMD files byte-for-byte, including CRLF.
 *.cmd -text
+*.ps1 text eol=crlf

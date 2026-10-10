@@ -1,79 +1,93 @@
 # cs2-config
 
-A tool for creating, saving and installing your CS2 config.
+Create, update and apply named CS2 settings profiles from a Windows CMD launcher.
+The interface is in English. Profile names can use any language.
 
 [Русская версия](README.ru.md)
 
-#### Which settings are covered
+## Create your config
 
-- Game configs (autoexec, your own ones)
-- Crosshair
-- Launch options
-- Video settings
-- A copy of the cloud settings (sensitivity, crosshair, binds and so on)
-- The settings tied to the PC (radar, fov, volumes and so on)
+[Download setup.cmd](https://github.com/oceanvievv/cs2-config/releases/latest/download/setup.cmd), put it in a writable folder, and run it. Sign in to Steam first.
+To capture settings, choose them in CS2 and exit the game. Enter a profile name,
+review the settings and destination, then choose **Create profile**. You can enter
+custom Steam, CS2 installation and output paths when needed.
 
-## Building the config on your PC
-
-[Download the installer](https://github.com/oceanvievv/cs2-config/releases/latest/download/setup.cmd)
-and run it. It creates the config folder **next to wherever you ran it from**:
-
-```
-cs2-config\
-   apply-config.cmd // Applies your settings
-   apply-config-using-console.txt // Fallback through the CS2 console, when the script cannot run
-   
-   update-config.cmd // Updates your settings
-   .gitattributes // Housekeeping: without it a downloaded apply-config.cmd will not run
-   
-   cfg\ // Game configs
-   video\ // Screen resolution, refresh rate, picture quality and so on
-   machine\ // What Steam Cloud does not carry: radar, fov, volumes, HUD scale and so on
-   cloud-backup\ // A copy of what Steam Cloud normally holds: mouse sensitivity, crosshair, binds and so on
-   
-   README.md // Instructions
-   README.ru.md // Instructions in Russian
+```text
+cs2-config/
+  profiles.json       Complete saved profiles; no default profile
+  apply-config.cmd    Main menu; all profiles are also embedded
+  update-config.cmd   Update an explicitly selected profile
+  setup.cmd           Create another profile
+  console/            A console command file for each profile
+  README.md           Instructions and links to console files
 ```
 
-Carry the folder on a USB stick, or [put it on GitHub](#the-config-in-the-cloud) to install the config on another
-PC with one command.
+There are no predefined profile names. Even a single profile requires explicit
+selection. **Back** returns one screen; **Back to main menu** returns to the main menu.
+No backup or restore workflow is created.
 
-## Updating the config
+## Apply a profile
 
-To update the config after changing your settings in the game, run `update-config.cmd`.
+1. Close CS2 and sign in to Steam with the account you will use.
+2. Run `apply-config.cmd` and choose **Apply profile**.
+3. Choose the profile, review the settings, then choose **Apply**.
+4. Review the result. Paste the displayed launch options into
+   **Steam > CS2 > Properties > General > Launch Options**, then start CS2.
 
-`update-config.cmd` carries the whole tool inside it. Before it rebuilds anything it asks
-this repository whether there is a newer version, and replaces itself with it if there is.
-Without that, a config folder built a year ago would keep rebuilding through a year-old
-tool forever. Pass `-NoUpdate` to skip the check.
+The CMD contains all profiles and can run on its own. If `profiles.json` is beside it,
+that file is authoritative. A damaged JSON file never triggers a silent fallback to
+an older embedded copy.
 
-If the config is already on GitHub, upload the folder again the same way —
-see [Updating the config in the cloud](#updating-the-config-in-the-cloud).
+Application creates missing account settings folders and prepares video settings
+using the target display adapter's identity, without requiring a preliminary CS2
+launch. If the fullscreen refresh rate exceeds the maximum available **at the
+requested resolution**, that maximum is used and reported. The stored profile is
+unchanged. Unsupported resolutions are skipped.
 
-## Installing the config on another PC
+Independent settings continue when another group cannot be written. Success means
+files were saved and checked; it does not claim that the game has already accepted
+them. Review skipped settings and check the result in CS2.
 
-Two ways, depending on how you keep the config:
+## Update or add a profile
 
-1. [The config in the cloud](#the-config-in-the-cloud). Open your repository and use the link from its README to download the file that applies the config
+Change your settings in CS2, exit it, and run `update-config.cmd`. Select the profile,
+review changes, then choose **Save changes**. Steam launch options are captured
+without filtering or appending arguments. Other profiles are unchanged.
 
-2. The config folder on a USB stick: carry it to the other PC and run `apply-config.cmd`
+Use **Create profile** in the main menu or run the generated `setup.cmd` to add another
+profile. Updating replaces the selected profile; previous versions are not retained.
 
-   > If the script will not run, paste the contents of `apply-config-using-console.txt` into the CS2 console. Only your basic configs and the crosshair are applied.
+To migrate a flat config folder, put the new `setup.cmd` beside its old `cfg`, `video`,
+`machine` and `cloud-backup` folders. Name the existing profile when prompted. Legacy
+crosshair sizes must first be converted or saved by the current CS2 version.
 
-Close CS2 first, either way. A running game holds its own copy of the video settings and
-writes them back over yours on the way out.
+To upgrade the utility inside an existing profile pack, download the latest `setup.cmd`
+into that pack's folder and create or update a profile with it. This rebuilds its
+launchers. Profile updates use the embedded utility and do not download code automatically.
 
-## The config in the cloud
+## Console alternative
 
-### Putting the config in the cloud
-1. Sign in at [github.com](https://github.com)
-2. Create a public repository (`cs2-config`, for example)
-3. On the page that opens, click **uploading an existing file**
-4. Drag the contents of the cs2-config folder onto the page
-5. Click **Commit changes**
+Open your config's README and follow the link for the desired profile. Paste commands
+into the CS2 console in small batches, then check your settings in CS2.
 
-### Updating the config in the cloud
-1. Open the repository holding your config
-2. Click `Add file` and pick `Upload files`
-3. Drag the contents of the cs2-config folder onto the page
-4. Click **Commit changes**
+Supported settings: crosshair, mouse, audio and controls.
+
+## Share or update a published config
+
+Upload the generated folder contents to your GitHub repository using
+**Add file > Upload files**, then **Commit changes**. Repeat after updating profiles.
+Download a fresh `apply-config.cmd` on another PC; old downloads keep their embedded
+settings. This utility never uploads anything automatically.
+
+## Development
+
+The shared PowerShell 5.1 implementation is in `src`. `setup.cmd` is generated:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/crosshair.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/profiles.ps1
+```
+
+Tests use temporary directories and do not modify installed Steam or CS2 settings.
+See [implementation notes](docs/profiles.md) for format and verification limits.

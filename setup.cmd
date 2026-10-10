@@ -1,1879 +1,885 @@
 @echo off
-rem ===================================================================
-rem  cs2-config setup - saves your CS2 settings into a portable folder.
-rem
-rem  Double-click this file. Nothing else is needed: the PowerShell
-rem  script is stored in plain text below the marker at the bottom of
-rem  this header, and you can read it in Notepad or on GitHub.
-rem
-rem  cmd stops reading at the exit below, so the marker and everything
-rem  after it are never parsed as batch. PowerShell re-reads this same
-rem  file as UTF-8, which is why the Russian text in it survives.
-rem
-rem  https://github.com/oceanvievv/cs2-config
-rem ===================================================================
-
 setlocal
-title cs2-config setup
-
-rem  Russian output needs a console codepage that can render Cyrillic; a stock
-rem  Russian Windows console is 866. Switch to UTF-8 and put the old one back on
-rem  the way out, so running this from an existing terminal leaves no trace.
-set "CP="
-for /f "tokens=2 delims=:" %%c in ('chcp') do set "CP=%%c"
+title CS2 CONFIG
+set "CS2_OLD_CP="
+for /f "tokens=2 delims=:" %%c in ('chcp') do set "CS2_OLD_CP=%%c"
 chcp 65001 >nul
-
-rem  Delete first. Otherwise a copy left by an earlier run stands in for the extraction
-rem  when the extraction fails, and a corrupted download quietly runs the previous version
-rem  instead of saying it is corrupted.
-set "PS1=%TEMP%\cs2-config-setup.ps1"
-if exist "%PS1%" del "%PS1%"
-
-rem  The script writes the finished pack's path here; only it knows where that is.
-set "OUTF=%TEMP%\cs2-config-outdir.txt"
-if exist "%OUTF%" del "%OUTF%"
-
-rem  Handed over as environment variables rather than pasted into the command line:
-rem  an apostrophe in the path would otherwise break the PowerShell string. SELFDIR is
-rem  where the pack gets built, so that this file placed inside a pack updates it.
-set "SELF=%~f0"
-set "SELFDIR=%~dp0"
-
-rem  A newer version of this file, downloaded by the script below and swapped in after it
-rem  exits. Deleted first: a leftover from an earlier run must never stand in for a
-rem  download that did not happen.
-set "ARGS=%*"
-set "NEWTOOL=%TEMP%\cs2-config-newtool.cmd"
-if exist "%NEWTOOL%" del "%NEWTOOL%"
-
-powershell -NoProfile -Command "$m='::'+'PS1'+'::'; $t=[IO.File]::ReadAllText($env:SELF,[Text.Encoding]::UTF8); $i=$t.LastIndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:TEMP+'\cs2-config-setup.ps1', $t.Substring($i+$m.Length), (New-Object Text.UTF8Encoding($true)))"
-if not exist "%PS1%" goto broken
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
-if errorlevel 3 goto swap
-if errorlevel 1 goto failed
-echo.
-pause
-call :openpack
-call :restorecp
-exit /b 0
-
-:swap
-rem  cmd re-reads a batch file by byte offset after every command it runs, so a file that
-rem  overwrites itself mid-run wrecks the rest of its own run. A second cmd does the swap
-rem  once this one is gone, then starts what is now the new file. It retries: the copy
-rem  fails while this process still holds the file open.
-if not exist "%NEWTOOL%" goto failed
-set "SWAP=%TEMP%\cs2-config-swap.cmd"
-> "%SWAP%" echo @echo off
->>"%SWAP%" echo chcp 65001 ^>nul
->>"%SWAP%" echo set "N=0"
->>"%SWAP%" echo :try
->>"%SWAP%" echo copy /y "%NEWTOOL%" "%SELF%" ^>nul 2^>^&1
->>"%SWAP%" echo if not errorlevel 1 goto ok
->>"%SWAP%" echo set /a N+=1
->>"%SWAP%" echo if %%N%% geq 20 goto stuck
->>"%SWAP%" echo ping -n 2 127.0.0.1 ^>nul
->>"%SWAP%" echo goto try
->>"%SWAP%" echo :ok
->>"%SWAP%" echo del "%NEWTOOL%" ^>nul 2^>^&1
->>"%SWAP%" echo set "CS2CFG_UPDATED=1"
->>"%SWAP%" echo start "" "%SELF%" %ARGS%
->>"%SWAP%" echo exit /b 0
->>"%SWAP%" echo :stuck
->>"%SWAP%" echo echo Could not replace "%SELF%". The new version is at "%NEWTOOL%".
->>"%SWAP%" echo echo Не удалось заменить "%SELF%". Новая версия лежит в "%NEWTOOL%".
->>"%SWAP%" echo pause
-start "" /min cmd /c "%SWAP%"
-call :restorecp
-exit /b 0
-
-rem  Both failure paths say it in both languages at once, with no detection. They run when
-rem  something has already gone wrong, which is the worst place for one more moving part.
+set "CS2_LAUNCHER=%~f0"
+set "CS2_PACK_ROOT=%~dp0"
+set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
+powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
+if errorlevel 1 goto broken
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+set "CS2_RESULT=%ERRORLEVEL%"
+if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
+if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
+exit /b %CS2_RESULT%
 :broken
-echo.
-echo Could not unpack the script from this file.
-echo Re-download it: some editors and chat apps corrupt .cmd files.
-echo.
-echo Не удалось распаковать скрипт из этого файла.
-echo Скачай его заново: некоторые редакторы и мессенджеры портят .cmd.
-echo.
+echo This file could not be opened. Download it again or use the console instructions.
 pause
-call :restorecp
+if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
 exit /b 1
-
-:failed
-echo.
-echo The script did not finish. Read the message above.
-echo A copy of it is at %PS1% if you want to run it by hand.
-echo.
-echo Скрипт не доработал. Смотри сообщение выше.
-echo Его копия лежит в %PS1%, если захочешь запустить вручную.
-echo.
-pause
-call :restorecp
-exit /b 1
-
-:openpack
-rem  Open the finished pack in Explorer, so nobody has to go hunting for it.
-if not exist "%OUTF%" goto :eof
-for /f "usebackq delims=" %%d in ("%OUTF%") do if exist "%%d" start "" "%%d"
-del "%OUTF%"
-goto :eof
-
-:restorecp
-if defined CP chcp %CP% >nul
-goto :eof
-
 ::PS1::
-<#
-.SYNOPSIS
-    Packs your CS2 settings into a portable bundle that restores itself on any PC.
-
-.DESCRIPTION
-    Steam Cloud syncs your sensitivity, crosshair and binds. It does not sync the .cfg
-    files in the game folder, your video settings, or your launch options. Lose those and
-    a borrowed PC feels wrong in ways you notice mid-round.
-
-    This script reads all of it off your machine and writes a folder containing:
-
-      apply-config.cmd   double-click it on the other PC; every config is
-                             embedded in it, so this one file puts everything back
-      apply-config-using-console.txt      fallback for locked-down PCs: paste into the console
-      cfg/ video/ cloud-backup/
-      README.md, README.ru.md
-
-    Nothing is uploaded. The folder is yours; publish it or keep it on a USB stick.
-
-    Double-clicking is the whole interface: which configs are yours, which one is the main
-    one, your crosshair, your launch options, your name and your language are all detected.
-
-    The parameters below are escape hatches for when detection gets it wrong, or for
-    driving this from a script. They are deliberately left out of the README, because a
-    flag you cannot pass by double-clicking is not something to put in front of everyone.
-
-.PARAMETER Name
-    Pack name. Defaults to your in-game name.
-
-.PARAMETER OutDir
-    Where to write the pack. Defaults to your Desktop: cs2-config-<name>
-
-.PARAMETER Main
-    Your main config, the one autoexec should run (e.g. myconfig.cfg). Auto-detected when
-    unambiguous: the config that no other config or bind already execs.
-
-.PARAMETER Include
-    Extra filenames from the game cfg folder to pack that detection skipped.
-
-.PARAMETER Exclude
-    Filenames to leave out.
-
-.PARAMETER RepoUrl
-    Your GitHub repo URL, if you plan to publish. Makes the download link in the generated
-    README point at your apply-config.cmd instead of leaving <you> and <repo> to fill in.
-
-.PARAMETER Anonymize
-    Strip your in-game name from the packed settings.
-
-.PARAMETER Force
-    Skip the notice about overwriting an existing pack folder.
-
-.PARAMETER NoUpdate
-    Do not look for a newer version of this tool. Only ever applies to update-config.cmd
-    inside a pack; setup.cmd never updates itself.
-
-.EXAMPLE
-    setup.cmd
-
-.EXAMPLE
-    setup.cmd -Main myconfig.cfg -RepoUrl https://github.com/me/cs2-config-me
-#>
-param(
-    [string]   $Name,
-    [string]   $OutDir,
-    [string]   $Main,
-    [string[]] $Include = @(),
-    [string[]] $Exclude = @(),
-    [string]   $RepoUrl,
-    [switch]   $Anonymize,
-    [switch]   $Force,
-    [switch]   $NoUpdate
-)
-
+param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
-$TOOL_VERSION = '1.3.0'
-$TOOL_URL     = 'https://github.com/oceanvievv/cs2-config'
-
-# The Windows display language decides, and nothing else. Keyboard layouts are
-# deliberately not consulted: having a Russian layout says nothing about which language
-# you want your tools in.
-$Lang = 'en'
-try {
-    if ((Get-UICulture).TwoLetterISOLanguageName -eq 'ru') { $Lang = 'ru' }
-} catch { }
-
-# Every message carries both languages at the call site. Passing only English is fine
-# and means "same in both", which is what you want for paths and file names.
-function L($en, $ru) {
-    if ($Lang -eq 'ru' -and $ru) { return $ru }
-    return $en
-}
-function Info($en, $ru) { Write-Host "     $(L $en $ru)" }
-function Ok  ($en, $ru) { Write-Host "OK   $(L $en $ru)" -ForegroundColor Green }
-function Warn($en, $ru) { Write-Host "WARN $(L $en $ru)" -ForegroundColor Yellow }
-function Die ($en, $ru) { Write-Host "FAIL $(L $en $ru)" -ForegroundColor Red; exit 1 }
-function Head($en, $ru) { Write-Host ''; Write-Host (L $en $ru) -ForegroundColor Cyan }
-
-# Pad a label to a fixed column so the two languages line up the same way.
-function Lbl($en, $ru) { return (L $en $ru).PadRight(18) }
-
-$UTF8 = New-Object System.Text.UTF8Encoding($false)   # no BOM: everything this writes
-
-# ==================================================================================
-#  Detection
-# ==================================================================================
-
-# Windows does not care how a path is spelled, but whoever reads the output does. Steam
-# writes SteamPath into the registry all lower case and with forward slashes, like
-# c:/program files (x86)/steam. The slashes are a substitution; how the folders are really
-# spelled only the filesystem knows, so every segment is looked up in its parent.
-function Get-TruePath($path) {
-    $dir = New-Object IO.DirectoryInfo $path
-    if (-not $dir.Exists) { return $path }
-    $parts = New-Object System.Collections.Generic.List[string]
-    while ($dir.Parent) {
-        $hit = $dir.Parent.GetDirectories($dir.Name)
-        if ($hit.Count -lt 1) { return $path }
-        $parts.Insert(0, $hit[0].Name)
-        $dir = $dir.Parent
+# BEGIN CORE
+# Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
+$TOOL_VERSION = '2.0.0'
+$script:Utf8 = New-Object Text.UTF8Encoding($false)
+function ConvertTo-Map($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $map = [ordered]@{}
+        foreach ($key in $Value.Keys) { $map[$key] = ConvertTo-Map $Value[$key] }
+        return $map
     }
-    # Only a drive letter is worth upper-casing. A UNC root is spelled by its server.
-    $root = $dir.Name.TrimEnd('\')
-    if ($root -match '^[a-z]:$') { $root = $root.ToUpper() }
-    if ($parts.Count -eq 0) { return "$root\" }
-    return $root + '\' + ($parts -join '\')
+    if ($Value -is [pscustomobject]) {
+        $map = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) { $map[$property.Name] = ConvertTo-Map $property.Value }
+        return $map
+    }
+    if ($Value -is [array]) { return ,@($Value | ForEach-Object { ConvertTo-Map $_ }) }
+    return $Value
+}
+function Copy-Data($Value) { ConvertTo-Map (ConvertFrom-Json (ConvertTo-Json -InputObject $Value -Depth 50)) }
+function ConvertFrom-KeyValues([string]$Text) {
+    $tokens = [regex]::Matches($Text, '(?m)//[^\r\n]*|"(?:\\.|[^"\\])*"|[{}]|[^\s{}"]+')
+    $state = @{ Index = 0; Tokens = @($tokens | Where-Object { -not $_.Value.StartsWith('//') } | ForEach-Object { $_.Value }) }
+    function Read-KvToken($token) {
+        if ($token.StartsWith('"')) { return $token.Substring(1, $token.Length - 2).Replace('\"','"').Replace('\\','\') }
+        return $token
+    }
+    function Read-KvObject($state, $nested) {
+        $map = [ordered]@{}
+        while ($state.Index -lt $state.Tokens.Count) {
+            $key = $state.Tokens[$state.Index++ ]
+            if ($key -eq '}') { if (-not $nested) { throw 'Invalid settings file.' }; return $map }
+            if ($key -eq '{' -or $state.Index -ge $state.Tokens.Count) { throw 'Invalid settings file.' }
+            $key = Read-KvToken $key
+            $value = $state.Tokens[$state.Index++ ]
+            if ($value -eq '{') { $value = Read-KvObject $state $true }
+            elseif ($value -eq '}') { throw 'Invalid settings file.' }
+            else { $value = Read-KvToken $value }
+            $map[$key] = $value
+        }
+        if ($nested) { throw 'Incomplete settings file.' }
+        return $map
+    }
+    Read-KvObject $state $false
+}
+function Read-KeyValues($Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return [ordered]@{} }
+    ConvertFrom-KeyValues ([IO.File]::ReadAllText($Path))
+}
+function Quote-Kv([string]$Text) { '"' + $Text.Replace('\','\\').Replace('"','\"').Replace("`r",'').Replace("`n",' ') + '"' }
+function ConvertTo-KeyValues($Map, [int]$Depth = 0) {
+    $lines = New-Object 'Collections.Generic.List[string]'
+    foreach ($key in $Map.Keys) {
+        $prefix = ("`t" * $Depth) + (Quote-Kv $key)
+        if ($Map[$key] -is [System.Collections.IDictionary]) {
+            $lines.Add($prefix); $lines.Add(("`t" * $Depth) + '{')
+            $lines.Add((ConvertTo-KeyValues $Map[$key] ($Depth + 1)))
+            $lines.Add(("`t" * $Depth) + '}')
+        } else { $lines.Add($prefix + "`t`t" + (Quote-Kv $Map[$key])) }
+    }
+    return ($lines -join "`r`n") + "`r`n"
+}
+function Get-KvSection($Map, [string[]]$Path) {
+    foreach ($key in $Path) {
+        if ($Map -isnot [System.Collections.IDictionary] -or -not $Map.Contains($key)) { return [ordered]@{} }
+        $Map = $Map[$key]
+    }
+    return $Map
+}
+function Write-TextFile($Path, [string]$Text) {
+    $parent = Split-Path -Parent $Path
+    [IO.Directory]::CreateDirectory($parent) | Out-Null
+    $temp = Join-Path $parent ('.cs2-write-' + [guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText($temp, $Text, $script:Utf8)
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [System.Management.Automation.Language.NullString]::Value) }
+        else { [IO.File]::Move($temp, $Path) }
+        if ([IO.File]::ReadAllText($Path) -cne $Text) { throw 'The saved file could not be verified.' }
+    } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+function Assert-Pack($Pack) {
+    if ($Pack.schemaVersion -ne 1 -or -not $Pack.name -or $Pack.profiles -isnot [array]) { throw 'This config could not be read. Check profiles.json.' }
+    $names = @{}; $ids = @{}
+    foreach ($profile in $Pack.profiles) {
+        if (-not $profile.name -or $profile.name -match '[\x00-\x1f]' -or $names.ContainsKey($profile.name)) { throw 'Profile names must be unique and non-empty.' }
+        if ($profile.id -notmatch '^[a-f0-9]{32}$' -or $ids.ContainsKey($profile.id)) { throw 'Invalid profile identifier.' }
+        $names[$profile.name] = $true; $ids[$profile.id] = $true
+        foreach ($section in @('gameFiles','user','keys','machine','video')) {
+            if ($profile[$section] -isnot [System.Collections.IDictionary]) { throw "Profile '$($profile.name)' is incomplete." }
+        }
+        foreach ($name in $profile.gameFiles.Keys) {
+            if ($name -notmatch '^[^<>:"/\\|?*\x00-\x1f]+\.cfg$' -or $name -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\.') { throw 'A config contains an invalid filename.' }
+            if ($profile.gameFiles[$name] -isnot [string]) { throw 'Invalid game config content.' }
+        }
+        foreach ($section in @('user','keys','machine','video')) {
+            foreach ($key in $profile[$section].Keys) {
+                if ($profile[$section][$key] -isnot [string] -or $key -match '[\r\n\x00]') { throw 'Invalid setting value.' }
+            }
+        }
+        if ($profile.launchOptions -isnot [string] -or $profile.launchOptions -match '[\r\n\x00]') { throw 'Invalid launch options.' }
+    }
+}
+function Read-Pack($Root, $Embedded) {
+    $path = Join-Path $Root 'profiles.json'
+    if (Test-Path -LiteralPath $path) { $pack = ConvertTo-Map (ConvertFrom-Json ([IO.File]::ReadAllText($path))) }
+    elseif ($Embedded) { $pack = ConvertTo-Map (ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Embedded)))) }
+    else { $pack = [ordered]@{ schemaVersion = 1; name = 'cs2-config'; profiles = @() } }
+    Assert-Pack $pack
+    return $pack
 }
 
-function Get-SteamPath {
-    foreach ($k in @('HKCU:\Software\Valve\Steam',
-                     'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam',
-                     'HKLM:\SOFTWARE\Valve\Steam')) {
-        if (Test-Path $k) {
-            $p = Get-ItemProperty $k
-            $raw = $p.SteamPath
-            if (-not $raw) { $raw = $p.InstallPath }
-            if ($raw) { return Get-TruePath (($raw -replace '/', '\').TrimEnd('\')) }
+function Get-LaunchOptions($Steam, $AccountId) {
+    $map = Read-KeyValues (Join-Path $Steam "userdata\$AccountId\config\localconfig.vdf")
+    $app = Get-KvSection $map @('UserLocalConfigStore','Software','Valve','Steam','apps','730')
+    if ($app.Contains('LaunchOptions')) { return [string]$app['LaunchOptions'] }
+    return ''
+}
+function Get-SettingsSection($Path, $Section) {
+    Get-KvSection (Read-KeyValues $Path) @('config', $Section)
+}
+function Get-CurrentCrosshair($map) {
+    $result = [ordered]@{}
+    $legacy = @('cl_crosshairalpha','cl_crosshaircolor','cl_crosshairsize','cl_crosshairthickness','cl_crosshairgap','cl_crosshairusealpha','cl_crosshairgap_useweaponvalue','cl_fixedcrosshairgap','cl_crosshair_outlinethickness')
+    if (-not ($map.Contains('cl_crosshair_length') -and $map.Contains('cl_crosshair_thickness') -and $map.Contains('cl_crosshair_gap'))) {
+        if ($map.Contains('cl_crosshairsize') -or $map.Contains('cl_crosshairthickness')) { throw 'The saved crosshair uses the old format. Save it in the current CS2 version before capturing this profile.' }
+        return $result
+    }
+    if (-not $map.Contains('cl_crosshair_screen_height')) { throw 'The crosshair reference resolution is missing. Save the crosshair in CS2 first.' }
+    foreach ($key in $map.Keys) {
+        if ($key -match '^cl_crosshair' -and $key -notin $legacy -and $key -ne 'cl_crosshair_screen_height') { $result[$key] = $map[$key] }
+    }
+    $result['cl_crosshair_screen_height'] = $map['cl_crosshair_screen_height']
+    return $result
+}
+function Select-GameSettings($Map) {
+    $result = [ordered]@{}
+    # Only player settings; do not publish passwords, session keys or cached account IDs.
+    foreach ($key in $Map.Keys) {
+        if ($key -match '^(cl_(crosshair|radar|hud|teamid|radial|quickinventory|scoreboard|predict|buy|sniper|show|mute|color|autohelp|player_ping|ping_fade|observed|net_buffer|hide_avatar|allow_animated|sanitize|deathcampanel|disable_round|dm_buy|enable_party|force_spec|teammate|timeout|use_last|versus|weapon_selection|debounce_zoom|grenadecrosshair|inventory_radial|ironsight|prefer_lefthanded|silencer_mode|use_opens_buy_menu)|snd_|voice_|viewmodel_|spec_|sensitivity|zoom_sensitivity_ratio|m_pitch|m_yaw|mouse_|hud_|safezone|fov_desired$|volume$|dsp_volume$|fps_max|speaker_config$|closecaption$|sv_voiceenable$|rate$|r_(drawtracers_firstperson|fullscreen_gamma|player_visibility_mode|show_build_info|spectator_flashbang_opacity|icon_image_cache_to_disk)|engine_low_latency_sleep_after_client_tick$|mapoverview_|csgo_map_preview_scale$|con_enable$|crosshair$|input_button_code_is_scan_code_scd$|joy_|option_|player_nevershow_communityservermessage$)') {
+            $result[$key] = [string]$Map[$key]
         }
     }
-    return $null
+    return $result
 }
-
-function Get-CS2CfgPath($steam) {
-    $roots = New-Object System.Collections.Generic.List[string]
-    $roots.Add($steam)
-    $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
-    if (Test-Path $vdf) {
-        foreach ($line in Get-Content $vdf) {
-            if ($line -match '"path"\s+"(.+?)"') { $roots.Add(($matches[1] -replace '\\\\', '\')) }
+function Get-UserGameFiles($Dir) {
+    $files = [ordered]@{}
+    foreach ($file in Get-ChildItem -LiteralPath $Dir -Filter '*.cfg' -File | Sort-Object Name) {
+        if ($file.Name -match '^(gamemode_|valve_|subscribed_|banned_|default_|360|joystick|undo_|config_default|cs2-profile-settings\.)' -or $file.Name -in @('server.cfg','server_default.cfg','perftest.cfg','default.cfg','config.cfg','video.cfg','videodefaults.cfg')) { continue }
+        $text = [IO.File]::ReadAllText($file.FullName)
+        if ($file.Name -eq 'autoexec.cfg') { $text = $text -replace '(?m)^\s*exec\s+"?cs2-profile-settings(?:\.cfg)?"?\s*\r?\n?', '' }
+        $files[$file.Name] = $text
+    }
+    return $files
+}
+function New-CapturedProfile($Context, $Name, $Id = '') {
+    Assert-GameClosed
+    $user = Get-SettingsSection (Join-Path $Context.UserCfg 'cs2_user_convars_0_slot0.vcfg') 'convars'
+    $video = Get-KvSection (Read-KeyValues (Join-Path $Context.UserCfg 'cs2_video.txt')) @('video.cfg')
+    if (-not $user.Count -or -not $video.Count) { throw 'No saved CS2 settings to read. Choose your settings in CS2, exit the game, then retry.' }
+    $crosshair = Get-CurrentCrosshair $user
+    $filtered = Select-GameSettings $user
+    foreach ($key in @($filtered.Keys)) { if ($key -match '^cl_crosshair') { $filtered.Remove($key) } }
+    foreach ($key in $crosshair.Keys) { $filtered[$key] = $crosshair[$key] }
+    if (-not $Id) { $Id = [guid]::NewGuid().ToString('N') }
+    return [ordered]@{
+        id = $Id; name = $Name; updatedAt = [DateTime]::UtcNow.ToString('o')
+        gameFiles = Get-UserGameFiles $Context.GameCfg
+        user = $filtered
+        keys = Get-SettingsSection (Join-Path $Context.UserCfg 'cs2_user_keys_0_slot0.vcfg') 'bindings'
+        machine = Select-GameSettings (Get-SettingsSection (Join-Path $Context.UserCfg 'cs2_machine_convars.vcfg') 'convars')
+        video = $video
+        launchOptions = Get-LaunchOptions $Context.Steam $Context.AccountId
+    }
+}
+function Get-StartupCommands($Profile) {
+    $lines = New-Object 'Collections.Generic.List[string]'
+    foreach ($section in @('machine','user')) {
+        foreach ($key in $Profile[$section].Keys) {
+            if ($key -eq 'cl_crosshair_screen_height') { continue }
+            $name = $key -replace '\$\d+$',''
+            if ($name -match '^[a-zA-Z_][a-zA-Z0-9_]*$') { $lines.Add($name + ' ' + (Quote-Kv $Profile[$section][$key])) }
         }
     }
-    foreach ($r in $roots) {
-        $p = Join-Path $r 'steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg'
-        if (Test-Path $p) { return Get-TruePath $p }
+    if ($Profile.user.Contains('cl_crosshair_screen_height')) { $lines.Add('cl_crosshair_screen_height ' + (Quote-Kv $Profile.user['cl_crosshair_screen_height'])) }
+    foreach ($key in $Profile.keys.Keys) {
+        if ($Profile.keys[$key] -eq '<unbound>') { $lines.Add('unbind ' + (Quote-Kv $key)) }
+        else { $lines.Add('bind ' + (Quote-Kv $key) + ' ' + (Quote-Kv $Profile.keys[$key])) }
     }
-    return $null
+    return ,$lines.ToArray()
 }
 
-function Get-SteamAccountId($steam) {
-    if (Test-Path 'HKCU:\Software\Valve\Steam\ActiveProcess') {
-        $id = (Get-ItemProperty 'HKCU:\Software\Valve\Steam\ActiveProcess').ActiveUser
-        if ($id -and $id -ne 0 -and (Test-Path (Join-Path $steam "userdata\$id\730"))) { return "$id" }
+function Assert-GameClosed {
+    if (Get-Process -Name cs2 -ErrorAction SilentlyContinue) { throw 'Close CS2 to continue. Exit the game normally, then retry.' }
+}
+function Find-Steam {
+    foreach ($key in @('HKCU:\Software\Valve\Steam','HKLM:\SOFTWARE\WOW6432Node\Valve\Steam','HKLM:\SOFTWARE\Valve\Steam')) {
+        $item = Get-ItemProperty $key -ErrorAction SilentlyContinue
+        foreach ($path in @($item.SteamPath,$item.InstallPath)) {
+            if ($path -and (Test-Path -LiteralPath $path -PathType Container)) { return [IO.Path]::GetFullPath($path.Replace('/','\')) }
+        }
     }
-    $ud = Join-Path $steam 'userdata'
-    if (-not (Test-Path $ud)) { return $null }
-    $best = Get-ChildItem $ud -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.FullName '730\local\cfg') } |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($best) { return $best.Name }
-    return $null
+    return ''
+}
+function Find-Game($Steam) {
+    $roots = @($Steam)
+    $libraries = Get-KvSection (Read-KeyValues (Join-Path $Steam 'steamapps\libraryfolders.vdf')) @('libraryfolders')
+    foreach ($value in $libraries.Values) { if ($value -is [System.Collections.IDictionary] -and $value.Contains('path')) { $roots += $value.path } }
+    foreach ($root in $roots | Select-Object -Unique) {
+        $path = Join-Path $root 'steamapps\common\Counter-Strike Global Offensive'
+        if (Test-Path -LiteralPath (Join-Path $path 'game\csgo\cfg') -PathType Container) { return $path }
+    }
+    return ''
+}
+function Get-SteamAccounts($Steam) {
+    $users = Get-KvSection (Read-KeyValues (Join-Path $Steam 'config\loginusers.vdf')) @('users')
+    foreach ($steamId in $users.Keys) {
+        if ($steamId -notmatch '^\d{17}$') { continue }
+        $account = [uint64]$steamId - [uint64]76561197960265728
+        if ($account -gt [uint32]::MaxValue) { continue }
+        [pscustomobject]@{ Id = [string]$account; Name = [string]$users[$steamId].PersonaName }
+    }
+}
+function Get-Context {
+    Assert-GameClosed
+    $steam = Find-Steam
+    while (-not $steam -or -not (Test-Path -LiteralPath (Join-Path $steam 'steam.exe'))) {
+        Show-Header 'Steam installation not found'
+        $steam = Read-Host 'Steam folder (0 to go back)'
+        if ($steam -eq '0') { return $null }
+        $steam = $steam.Trim().Trim('"')
+    }
+    $game = Find-Game $steam
+    while (-not $game -or -not (Test-Path -LiteralPath (Join-Path $game 'game\csgo\cfg'))) {
+        Show-Header 'CS2 installation not found'
+        $game = Read-Host 'CS2 installation folder (0 to go back)'
+        if ($game -eq '0') { return $null }
+        $game = $game.Trim().Trim('"')
+    }
+    # ActiveUser does not depend on an existing 730 directory: this also works before
+    # the account's first CS2 launch. Never guess the most recently modified folder.
+    $active = (Get-ItemProperty 'HKCU:\Software\Valve\Steam\ActiveProcess' -ErrorAction SilentlyContinue).ActiveUser
+    $accounts = @(Get-SteamAccounts $steam)
+    $accountId = ''
+    if ($active -and $active -gt 0 -and (Get-Process -Name steam -ErrorAction SilentlyContinue)) { $accountId = [string]$active }
+    if (-not $accountId) {
+        if (-not $accounts.Count) { throw 'Sign in to Steam with the account you want to use, then retry.' }
+        Show-Header 'Choose a Steam account'
+        for ($i=0; $i -lt $accounts.Count; $i++) { Write-Host "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
+        Write-Host '  [0] Back'
+        $index = Read-Choice (0..$accounts.Count)
+        if ($index -eq 0) { return $null }
+        $accountId = $accounts[$index-1].Id
+    }
+    return [pscustomobject]@{ Steam=$steam; GameCfg=(Join-Path $game 'game\csgo\cfg'); AccountId=$accountId; UserCfg=(Join-Path $steam "userdata\$accountId\730\local\cfg") }
+}
+function Initialize-DisplayApi {
+    if ('CS2Displays' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class CS2Display {
+    public string Device, Name, HardwareId;
+    public List<int[]> Modes = new List<int[]>();
+}
+public static class CS2Displays {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct DISPLAY_DEVICE {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceKey;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct DEVMODE {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmDeviceName;
+        public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+        public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+        public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+    }
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool EnumDisplayDevices(string device, int index, ref DISPLAY_DEVICE result, int flags);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool EnumDisplaySettings(string device, int mode, ref DEVMODE result);
+    public static CS2Display[] Read() {
+        var displays = new List<CS2Display>();
+        for (int i=0; i<32; i++) {
+            var device = new DISPLAY_DEVICE(); device.cb=Marshal.SizeOf(device);
+            if (!EnumDisplayDevices(null,i,ref device,0)) break;
+            if ((device.StateFlags & 1)==0 || (device.StateFlags & 8)!=0) continue;
+            var display = new CS2Display { Device=device.DeviceName, Name=device.DeviceString, HardwareId=device.DeviceID };
+            for (int m=0; m<4096; m++) {
+                var mode=new DEVMODE(); mode.dmSize=(short)Marshal.SizeOf(mode);
+                if (!EnumDisplaySettings(device.DeviceName,m,ref mode)) break;
+                display.Modes.Add(new int[] {mode.dmPelsWidth,mode.dmPelsHeight,mode.dmDisplayFrequency});
+            }
+            displays.Add(display);
+        }
+        return displays.ToArray();
+    }
+}
+'@
+}
+function Get-DisplayHardware($Video, $Destination) {
+    Initialize-DisplayApi
+    $displays = @([CS2Displays]::Read())
+    $index = 0
+    if ($Video.Contains('setting.monitor_index')) { [void][int]::TryParse($Video['setting.monitor_index'], [ref]$index) }
+    if ($index -lt 0 -or $index -ge $displays.Count) { return @{ Identity=@{}; Modes=@(); Reason='The selected display could not be found.' } }
+    $display = $displays[$index]
+    $identity = @{}
+    if ($display.HardwareId -match 'VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') {
+        $identity.VendorID = [string][Convert]::ToInt32($matches[1],16)
+        $identity.DeviceID = [string][Convert]::ToInt32($matches[2],16)
+    }
+    $local = Get-KvSection (Read-KeyValues $Destination) @('video.cfg')
+    if ($local.Contains('Version')) { $identity.Version = $local.Version }
+    $identity['setting.knowndevice'] = '1'
+    $identity.Autoconfig = '2'
+    return @{ Identity=$identity; Modes=@($display.Modes); Reason='' }
 }
 
-# Launch options live in the 730 block of localconfig.vdf. Other apps have their own
-# "LaunchOptions" lines, so walk back to the nearest app id and check it.
-function Get-LaunchOptions($steam, $accountId) {
-    $lc = Join-Path $steam "userdata\$accountId\config\localconfig.vdf"
-    if (-not (Test-Path $lc)) { return $null }
-    $lines = Get-Content $lc
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match '"LaunchOptions"\s+"(.*)"\s*$') {
-            $value = $matches[1]
-            for ($j = $i; $j -ge 0 -and $j -gt $i - 60; $j--) {
-                if ($lines[$j] -match '^\s*"(\d{3,7})"\s*$') {
-                    if ($matches[1] -eq '730') { return $value }
-                    break
+$script:DisplayKeys = @('setting.defaultres','setting.defaultresheight','setting.fullscreen','setting.coop_fullscreen','setting.nowindowborder','setting.refreshrate_numerator','setting.refreshrate_denominator','setting.monitor_index','setting.aspectratiomode')
+$script:VideoChoices = [ordered]@{
+    'setting.msaa_samples'=@('Multisampling Anti-Aliasing Mode', @{'0'='None';'2'='2x MSAA';'4'='4x MSAA';'8'='8x MSAA'})
+    'setting.videocfg_shadow_quality'=@('Global Shadow Quality', @{'0'='Low';'1'='Medium';'2'='High';'3'='Very High'})
+    'setting.videocfg_dynamic_shadows'=@('Dynamic Shadows', @{'0'='Sun Only';'1'='All'})
+    'setting.videocfg_texture_detail'=@('Model / Texture Detail', @{'0'='Low';'1'='Medium';'2'='High'})
+    'setting.r_texturefilteringquality'=@('Texture Filtering Mode', @{'0'='Bilinear';'1'='Trilinear';'2'='Anisotropic 2x';'3'='Anisotropic 4x';'4'='Anisotropic 8x';'5'='Anisotropic 16x'})
+    'setting.shaderquality'=@('Shader Detail', @{'0'='Low';'1'='High'})
+    'setting.videocfg_particle_detail'=@('Particle Detail', @{'0'='Low';'1'='Medium';'2'='High';'3'='Very High'})
+    'setting.videocfg_ao_detail'=@('Ambient Occlusion', @{'0'='Disabled';'2'='Medium';'3'='High'})
+    'setting.videocfg_hdr_detail'=@('High Dynamic Range', @{'3'='Performance';'-1'='Quality'})
+    'setting.videocfg_fsr_detail'=@('FidelityFX Super Resolution', @{'0'='Disabled (Highest Quality)';'1'='Ultra Quality';'2'='Quality';'3'='Balanced';'4'='Performance'})
+    'setting.mat_vsync'=@('Vertical Sync', @{'0'='Disabled';'1'='Enabled'})
+    'setting.r_low_latency'=@('NVIDIA Reflex Low Latency', @{'0'='Disabled';'1'='Enabled';'2'='Enabled + Boost'})
+}
+function New-Issue($Setting,$Reason,$Kind='Skipped') { [pscustomobject]@{ Setting=$Setting; Reason=$Reason; Kind=$Kind } }
+function Get-VideoPlan($Video, $Local, $Hardware) {
+    $out = Copy-Data $Local
+    $issues = New-Object 'Collections.Generic.List[object]'
+    $adjustedRate = 0
+    if (-not $Video.Count) { $issues.Add((New-Issue 'Video' 'No video settings in this profile.')); return @{ Values=$out; Issues=$issues; Changed=$false } }
+    if (-not $Hardware.Identity.VendorID -or -not $Hardware.Identity.DeviceID) {
+        $issues.Add((New-Issue 'Video' 'The graphics device could not be identified.'))
+        return @{ Values=$out; Issues=$issues; Changed=$false }
+    }
+    $reason = $Hardware.Reason
+    foreach ($key in @('setting.defaultres','setting.defaultresheight','setting.fullscreen','setting.refreshrate_numerator','setting.refreshrate_denominator')) {
+        if (-not $Video.Contains($key)) { $reason = 'Resolution, display mode or refresh rate is missing.' }
+    }
+    $width=0; $height=0; $num=0; $den=0
+    if (-not [int]::TryParse($Video['setting.defaultres'],[ref]$width) -or $width -le 0 -or
+        -not [int]::TryParse($Video['setting.defaultresheight'],[ref]$height) -or $height -le 0 -or
+        -not [int]::TryParse($Video['setting.refreshrate_numerator'],[ref]$num) -or $num -le 0 -or
+        -not [int]::TryParse($Video['setting.refreshrate_denominator'],[ref]$den) -or $den -le 0 -or
+        $Video['setting.fullscreen'] -notin @('0','1')) { $reason = 'Resolution, display mode or refresh rate is invalid.' }
+    if (-not $reason -and $Video['setting.fullscreen'] -eq '1') {
+        $rates = @($Hardware.Modes | Where-Object { $_[0] -eq $width -and $_[1] -eq $height -and $_[2] -gt 1 } | ForEach-Object { $_[2] })
+        $maximum = ($rates | Measure-Object -Maximum).Maximum
+        if ($rates.Count -and ($num / $den) -gt ($maximum + 1.1)) {
+            $adjustedRate = [int]$maximum
+            $issues.Add((New-Issue 'Refresh Rate' ("{0:0.###} Hz -> {1} Hz - maximum supported at {2} x {3}." -f ($num/$den),$maximum,$width,$height) 'Adjusted'))
+        } elseif (-not @($rates | Where-Object { [Math]::Abs($_ - ($num / $den)) -lt 1.1 }).Count) {
+            $reason = 'The requested resolution and refresh rate are unavailable.'
+        }
+    }
+    if ($reason) {
+        $issues.Add((New-Issue 'Display' $reason))
+        if (-not $Local.Contains('setting.defaultres')) {
+            $issues.Add((New-Issue 'Advanced video' 'Choose an available display mode before preparing video settings on this PC.'))
+            return @{ Values=$out; Issues=$issues; Changed=$false }
+        }
+    }
+    foreach ($key in $Video.Keys) {
+        if ($key -in @('VendorID','DeviceID','Version','Autoconfig','setting.knowndevice')) { continue }
+        if ($key -in $script:DisplayKeys -and $reason) { continue }
+        if ($key -eq 'setting.r_csgo_cmaa_enable' -and $Video.Contains('setting.msaa_samples') -and -not $script:VideoChoices['setting.msaa_samples'][1].ContainsKey($Video['setting.msaa_samples'])) { continue }
+        if ($script:VideoChoices.Contains($key) -and -not $script:VideoChoices[$key][1].ContainsKey($Video[$key])) {
+            $issues.Add((New-Issue $script:VideoChoices[$key][0] 'The profile contains an unsupported value.')); continue
+        }
+        $out[$key] = $Video[$key]
+    }
+    if ($adjustedRate) {
+        $out['setting.refreshrate_numerator'] = [string]($adjustedRate * 1000)
+        $out['setting.refreshrate_denominator'] = '1000'
+    }
+    if (-not $out.Contains('Version')) { $out.Version = $Video.Version }
+    foreach ($key in $Hardware.Identity.Keys) { $out[$key] = $Hardware.Identity[$key] }
+    return @{ Values=$out; Issues=$issues; Changed=$true }
+}
+function Merge-SettingsFile($Path,$Section,$Values) {
+    $root = Read-KeyValues $Path
+    if (-not $root.Contains('config')) { $root.config = [ordered]@{} }
+    if (-not $root.config.Contains($Section)) { $root.config[$Section] = [ordered]@{} }
+    foreach ($key in $Values.Keys) { $root.config[$Section][$key] = $Values[$key] }
+    Write-TextFile $Path (ConvertTo-KeyValues $root)
+}
+function New-ApplyPlan($Profile,$Context,$Hardware=$null) {
+    $path = Join-Path $Context.UserCfg 'cs2_video.txt'
+    try {
+        $local = Get-KvSection (Read-KeyValues $path) @('video.cfg')
+        if ($null -eq $Hardware) { $Hardware = Get-DisplayHardware $Profile.video $path }
+        $video = Get-VideoPlan $Profile.video $local $Hardware
+    } catch {
+        $video=@{Values=@{};Changed=$false;Issues=@((New-Issue 'Video' 'The display or existing video settings could not be read.'))}
+    }
+    return @{ Video=$video; Context=$Context; Profile=$Profile }
+}
+function Get-EffectiveLaunchOptions($Profile,$Plan) {
+    $line=$Profile.launchOptions
+    if (@($Plan.Video.Issues | Where-Object {$_.Kind -eq 'Adjusted' -and $_.Setting -eq 'Refresh Rate'}).Count) {
+        $hz=[int]([double]$Plan.Video.Values['setting.refreshrate_numerator'] / [double]$Plan.Video.Values['setting.refreshrate_denominator'])
+        $line=[regex]::Replace($line,'(?i)(?<!\S)(-freq|-refresh|-refreshrate)\s+(?:"[^"]*"|\S+)', {param($m) $m.Groups[1].Value+' '+$hz})
+    }
+    return $line
+}
+function Invoke-ApplyPlan($Plan) {
+    Assert-GameClosed
+    $profile=$Plan.Profile; $ctx=$Plan.Context
+    $issues = New-Object 'Collections.Generic.List[object]'
+    foreach ($issue in $Plan.Video.Issues) { $issues.Add($issue) }
+    $saved = New-Object 'Collections.Generic.List[string]'
+    # Each independent destination is verified separately; a video failure does not
+    # prevent mouse, binds or audio from being written.
+    foreach ($item in @(@('user','cs2_user_convars_0_slot0.vcfg','convars','Player settings'), @('machine','cs2_machine_convars.vcfg','convars','Audio, HUD and radar'), @('keys','cs2_user_keys_0_slot0.vcfg','bindings','Controls'))) {
+        if (-not $profile[$item[0]].Count) { continue }
+        try { Merge-SettingsFile (Join-Path $ctx.UserCfg $item[1]) $item[2] $profile[$item[0]]; $saved.Add($item[3]) }
+        catch { $issues.Add((New-Issue $item[3] 'Could not save or verify the settings. Check the folder permissions.')) }
+    }
+    if ($Plan.Video.Changed) {
+        try { Write-TextFile (Join-Path $ctx.UserCfg 'cs2_video.txt') (ConvertTo-KeyValues ([ordered]@{ 'video.cfg'=$Plan.Video.Values })); $saved.Add('Video') }
+        catch { $issues.Add((New-Issue 'Video' 'Could not save or verify the settings. Check the folder permissions.')) }
+    }
+    $gameFailed = $false
+    foreach ($name in $profile.gameFiles.Keys) {
+        if ($name -in @('autoexec.cfg','cs2-profile-settings.cfg')) { continue }
+        try { Write-TextFile (Join-Path $ctx.GameCfg $name) $profile.gameFiles[$name] }
+        catch { $gameFailed=$true }
+    }
+    try {
+        Write-TextFile (Join-Path $ctx.GameCfg 'cs2-profile-settings.cfg') ((Get-StartupCommands $profile) -join "`r`n")
+        $auto = [string]$profile.gameFiles['autoexec.cfg']
+        $auto = $auto -replace '(?m)^\s*exec\s+"?cs2-profile-settings(?:\.cfg)?"?\s*\r?\n?', ''
+        Write-TextFile (Join-Path $ctx.GameCfg 'autoexec.cfg') ($auto.TrimEnd() + "`r`nexec cs2-profile-settings`r`n")
+    } catch { $gameFailed=$true }
+    if ($gameFailed) { $issues.Add((New-Issue 'Startup configs' 'Some config files could not be saved or verified. Check the folder permissions.')) }
+    else { $saved.Add('Startup configs') }
+    return @{ Saved=$saved.ToArray(); Issues=$issues.ToArray() }
+}
+
+function New-LauncherText($Core,$Pack,$Mode) {
+    $json = ConvertTo-Json -InputObject $Pack -Depth 50 -Compress
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+    $header = @'
+@echo off
+setlocal
+title CS2 CONFIG
+set "CS2_OLD_CP="
+for /f "tokens=2 delims=:" %%c in ('chcp') do set "CS2_OLD_CP=%%c"
+chcp 65001 >nul
+set "CS2_LAUNCHER=%~f0"
+set "CS2_PACK_ROOT=%~dp0"
+set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
+powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
+if errorlevel 1 goto broken
+powershell -NoProfile -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+set "CS2_RESULT=%ERRORLEVEL%"
+if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
+if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
+exit /b %CS2_RESULT%
+:broken
+echo This file could not be opened. Download it again or use the console instructions.
+pause
+if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
+exit /b 1
+::PS1::
+'@
+    $entry = @'
+param([ValidateSet('menu','create','update','apply')][string]$Mode = '__MODE__')
+$ErrorActionPreference = 'Stop'
+'@
+    $tail = @'
+$script:CoreSource = [IO.File]::ReadAllText($PSCommandPath)
+$script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(.*?)^# END CORE\r?$').Groups[1].Value.Trim()
+try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT '__PAYLOAD__' }
+catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; [void](Read-Host 'Press Enter to close'); exit 1 }
+'@
+    $text = $header + "`n" + $entry.Replace('__MODE__',$Mode) + "`n# BEGIN CORE`n" + $Core.Trim() + "`n# END CORE`n" + $tail.Replace('__PAYLOAD__',$encoded)
+    return ($text -replace "`r?`n", "`r`n") + "`r`n"
+}
+function Get-ConsoleCommands($Profile) {
+    $lines = New-Object 'Collections.Generic.List[string]'
+    $visiting = @{}
+    function Expand-Config($Name, $Depth) {
+        if ($Depth -gt 20 -or $visiting.ContainsKey($Name) -or -not $Profile.gameFiles.Contains($Name)) { return }
+        $visiting[$Name]=$true
+        foreach ($line in ($Profile.gameFiles[$Name] -split '\r?\n')) {
+            if ($line.Trim() -match '^(//|$)') { continue }
+            if ($line -match '^\s*exec\s+"?([^"\s;]+)"?\s*(?://.*)?$') {
+                $next=$matches[1]; if (-not $next.EndsWith('.cfg')) { $next+='.cfg' }
+                Expand-Config $next ($Depth+1)
+            } else { $lines.Add($line.TrimEnd()) }
+        }
+        $visiting.Remove($Name)
+    }
+    Expand-Config 'autoexec.cfg' 0
+    foreach ($line in (Get-StartupCommands $Profile)) { $lines.Add($line) }
+    return $lines -join "`r`n"
+}
+function Get-ConsoleFilename($Profile) {
+    $name = $Profile.name -replace '[<>:"/\\|?*\x00-\x1f]', '_'
+    $name=$name.Trim().TrimEnd('.')
+    if ($name.Length -gt 60) { $name=$name.Substring(0,60) }
+    return 'profile-' + $name + '-' + $Profile.id.Substring(0,8) + '.txt'
+}
+function Export-Pack($Pack,$Root) {
+    Assert-Pack $Pack
+    $rootPath=[IO.Path]::GetFullPath($Root)
+    if (-not $script:CoreSource) { throw 'The application source is unavailable. Run setup.cmd again.' }
+    # Prepare every output before replacing anything. profiles.json is authoritative;
+    # a failed launcher write can be retried without losing the new profile.
+    $outputs=[ordered]@{}
+    $outputs['profiles.json']=(ConvertTo-Json -InputObject $Pack -Depth 50) + "`r`n"
+    $outputs['apply-config.cmd']=New-LauncherText $script:CoreSource $Pack 'menu'
+    $outputs['update-config.cmd']=New-LauncherText $script:CoreSource $Pack 'update'
+    $outputs['setup.cmd']=New-LauncherText $script:CoreSource $Pack 'create'
+    $readme=New-Object 'Collections.Generic.List[string]'
+    $readme.Add('# ' + $Pack.name)
+    $readme.Add("`nRun **apply-config.cmd**, choose **Apply profile**, then choose a profile explicitly. Review the settings and select **Apply**.")
+    $readme.Add("`nClose CS2 before applying or capturing settings. Sign in to Steam first. Applying a profile creates missing settings folders; no preliminary CS2 launch is required.")
+    $readme.Add("`n## Profiles`n")
+    foreach ($profile in $Pack.profiles) {
+        $name=Get-ConsoleFilename $profile
+        $outputs['console\'+$name]=Get-ConsoleCommands $profile
+        $readme.Add('- **' + $profile.name + '**: [console commands](console/' + [Uri]::EscapeDataString($name) + ')')
+    }
+    $readme.Add("`n## Update a profile`n`nChange settings in CS2 or launch options in Steam, exit CS2, run **update-config.cmd**, and select the profile to update. Review the changes and choose **Save changes**. Only the selected profile is replaced. No previous versions are retained.")
+    $readme.Add("`n## Create a profile`n`nRun **setup.cmd** or choose **Create profile** in the main menu. Enter any unique name, review the settings and destination, then choose **Create profile**.")
+    $readme.Add("`n## Launch options`n`nThe profile stores the exact launch options read from Steam. After applying, paste the displayed line into **Steam > CS2 > Properties > General > Launch Options**. An empty line means clearing that field. Launch options are a manual step.")
+    $readme.Add("`nIf the requested fullscreen refresh rate exceeds the maximum available at the profile's resolution, the utility uses that maximum and reports the adjustment. The saved profile is unchanged. Explicit refresh arguments in the displayed launch-options line are adjusted for this application too. Unavailable resolutions are skipped.")
+    $readme.Add("`n## Console alternative`n`nOpen the command file for your profile above. Paste its commands into the CS2 console in small batches, then check your settings in CS2.`n`nSupported settings: crosshair, mouse, audio and controls.")
+    $readme.Add("`n## Files and results`n`n**profiles.json** is the editable source for this config. Keep it beside the CMD files. Each CMD also contains all profiles, so a downloaded **apply-config.cmd** can run on its own. Rebuilding updates all launchers and console files. Saved and checked means the values were verified on disk; check the actual result after starting CS2. Skipped settings and write failures are listed separately.")
+    $readme.Add("`n## Publish or update on GitHub`n`nOpen your config repository, choose **Add file > Upload files**, upload the updated folder contents and choose **Commit changes**. Download a fresh **apply-config.cmd** on another PC; previously downloaded files keep their embedded settings.")
+    if ($Pack.Contains('notes') -and $Pack.notes) {
+        $readme.Add("`n## Config notes`n")
+        foreach ($note in $Pack.notes) { $readme.Add([string]$note) }
+    }
+    $outputs['README.md']=$readme -join "`r`n"
+    $outputs['.gitattributes']="*.cmd -text`r`n*.ps1 text eol=crlf`r`n"
+    foreach ($name in $outputs.Keys) { Write-TextFile (Join-Path $rootPath $name) $outputs[$name] }
+}
+function Import-LegacyProfile($Root,$Name) {
+    $user=Get-SettingsSection (Join-Path $Root 'cloud-backup\cs2_user_convars_0_slot0.vcfg') 'convars'
+    $crosshair=Get-CurrentCrosshair $user
+    $user=Select-GameSettings $user
+    foreach ($key in @($user.Keys)) { if ($key -match '^cl_crosshair') { $user.Remove($key) } }
+    foreach ($key in $crosshair.Keys) { $user[$key]=$crosshair[$key] }
+    $launch=''
+    $launcher=Join-Path $Root 'apply-config.cmd'
+    if (Test-Path -LiteralPath $launcher) {
+        # Only read a literal; never evaluate a downloaded old launcher.
+        $match=[regex]::Match([IO.File]::ReadAllText($launcher), '(?m)^\$LaunchOptions\s*=\s*''((?:''''|[^''])*)''\s*$')
+        if ($match.Success) { $launch=$match.Groups[1].Value.Replace("''", "'") }
+    }
+    return [ordered]@{
+        id=[guid]::NewGuid().ToString('N'); name=$Name; updatedAt=[DateTime]::UtcNow.ToString('o')
+        gameFiles=Get-UserGameFiles (Join-Path $Root 'cfg'); user=$user
+        keys=Get-SettingsSection (Join-Path $Root 'cloud-backup\cs2_user_keys_0_slot0.vcfg') 'bindings'
+        machine=Select-GameSettings (Get-SettingsSection (Join-Path $Root 'machine\cs2_machine_convars.vcfg') 'convars')
+        video=Get-KvSection (Read-KeyValues (Join-Path $Root 'video\cs2_video.txt')) @('video.cfg')
+        launchOptions=$launch
+    }
+}
+
+function Show-Header($Title) {
+    Write-Host ''; Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
+    Write-Host ('Config name: ' + $script:Pack.name)
+    Write-Host ''; Write-Host $Title -ForegroundColor White; Write-Host ''
+}
+function Read-Choice([int[]]$Allowed) {
+    while ($true) {
+        $value=Read-Host 'Choose an option'
+        $number=-1
+        if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
+        Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow
+    }
+}
+function Wait-Back { Write-Host ''; [void](Read-Host 'Press Enter to go back') }
+function Select-Profile($Purpose) {
+    if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
+    Show-Header ('Choose a profile to ' + $Purpose)
+    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-Host "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
+    Write-Host '  [0] Back'; Write-Host ''
+    $index=Read-Choice (0..$script:Pack.profiles.Count)
+    if ($index -eq 0) { return $null }
+    return $script:Pack.profiles[$index-1]
+}
+function Get-ProfileRows($Profile) {
+    $rows=New-Object 'Collections.Generic.List[object]'
+    function Row($Group,$Name,$Value) { if ($null -ne $Value -and "$Value" -ne '') { $rows.Add([pscustomobject]@{ Group=$Group; Name=$Name; Value=[string]$Value }) } }
+    function Value($Map,$Key) {
+        if ($Map.Contains($Key)) { return $Map[$Key] }
+        foreach ($candidate in $Map.Keys) { if (($candidate -replace '\$\d+$','') -eq $Key) { return $Map[$candidate] } }
+        return $null
+    }
+    function Toggle($Text) { if ($Text -in @('1','true')) { return 'On' }; if ($Text -in @('0','false')) { return 'Off' }; return $Text }
+    $video=$Profile.video
+    if ($video.Contains('setting.defaultres')) { Row 'Display' 'Resolution' ($video['setting.defaultres']+' x '+$video['setting.defaultresheight']) }
+    if ($video.Contains('setting.fullscreen')) {
+        $mode='Windowed'
+        if ($video['setting.fullscreen'] -eq '1') { $mode='Fullscreen' }
+        elseif ($video['setting.nowindowborder'] -eq '1') { $mode='Fullscreen Windowed' }
+        Row 'Display' 'Display Mode' $mode
+    }
+    $num=0.0; $den=0.0
+    if ([double]::TryParse($video['setting.refreshrate_numerator'],[ref]$num) -and [double]::TryParse($video['setting.refreshrate_denominator'],[ref]$den) -and $den -gt 0) { Row 'Display' 'Refresh Rate' (([Math]::Round($num/$den,3)).ToString([Globalization.CultureInfo]::InvariantCulture)+' Hz') }
+    foreach ($key in $script:VideoChoices.Keys) {
+        if (-not $video.Contains($key)) { continue }
+        $value=$script:VideoChoices[$key][1][$video[$key]]
+        if ($key -eq 'setting.msaa_samples' -and $video[$key] -eq '0' -and $video['setting.r_csgo_cmaa_enable'] -eq '1') { $value='CMAA2' }
+        if (-not $value) { $value='Unsupported value' }
+        Row 'Advanced video' $script:VideoChoices[$key][0] $value
+    }
+    $all=Copy-Data $Profile.machine
+    foreach ($key in $Profile.user.Keys) { $all[$key]=$Profile.user[$key] }
+    $labels=@(
+        @('Mouse','Sensitivity','sensitivity'),@('Mouse','Zoom Sensitivity','zoom_sensitivity_ratio'),
+        @('Crosshair','Length (px)','cl_crosshair_length'),@('Crosshair','Thickness (px)','cl_crosshair_thickness'),@('Crosshair','Gap (px)','cl_crosshair_gap'),
+        @('Crosshair','Center Dot','cl_crosshairdot'),@('Crosshair','Follow Recoil','cl_crosshair_recoil'),@('Crosshair','T Style','cl_crosshair_t'),
+        @('Audio','Master Volume','volume'),@('Audio','Voice Chat Volume','snd_voipvolume'),@('Audio','Music Volume','snd_musicvolume'),
+        @('HUD and radar','HUD Scale','hud_scaling'),@('HUD and radar','Radar Scale','cl_radar_scale'),@('HUD and radar','Radar Always Centered','cl_radar_always_centered'),@('HUD and radar','Rotate Radar','cl_radar_rotate'),
+        @('Viewmodel','Field of View','viewmodel_fov'),@('Viewmodel','Horizontal Position','viewmodel_offset_x'),@('Viewmodel','Forward Position','viewmodel_offset_y'),@('Viewmodel','Vertical Position','viewmodel_offset_z'),
+        @('Game','Maximum FPS','fps_max'),@('Game','Menu Maximum FPS','fps_max_ui'),@('Game','Invert Mouse','mouse_inverty')
+    )
+    foreach ($label in $labels) {
+        $value=Value $all $label[2]
+        if ($label[2] -in @('cl_crosshairdot','cl_crosshair_recoil','cl_crosshair_t','cl_radar_always_centered','cl_radar_rotate','mouse_inverty')) { $value=Toggle $value }
+        elseif ($null -ne $value -and $label[2] -in @('volume','snd_voipvolume','snd_musicvolume','hud_scaling','cl_radar_scale')) {
+            $amount=0.0
+            if ([double]::TryParse($value,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$amount)) { $value=([Math]::Round($amount*100,1)).ToString([Globalization.CultureInfo]::InvariantCulture)+'%' }
+        }
+        elseif ($value -eq '0' -and $label[2] -in @('fps_max','fps_max_ui')) { $value='Unlimited' }
+        Row $label[0] $label[1] $value
+    }
+    if ($all.Contains('cl_crosshairstyle')) { Row 'Crosshair' 'Style' (@{'2'='Classic';'4'='Classic Static';'5'='Legacy'}[$all.cl_crosshairstyle]) }
+    if ($all.Contains('cl_crosshair_drawoutline')) { Row 'Crosshair' 'Outline' (@{'0'='Off';'1'='Full Outline';'2'='Half Outline'}[$all.cl_crosshair_drawoutline]) }
+    if ($all.Contains('cl_crosshaircolor_r')) { Row 'Crosshair' 'Color (RGB)' ($all.cl_crosshaircolor_r+', '+$all.cl_crosshaircolor_g+', '+$all.cl_crosshaircolor_b) }
+    $actions=@{ '+jump'='Jump';'+attack'='Fire';'+attack2'='Secondary Fire';'+forward'='Move Forward';'+back'='Move Back';'+left'='Move Left';'+right'='Move Right';'+duck'='Crouch';'+sprint'='Walk';'+use'='Use';'+reload'='Reload';'+voicerecord'='Voice Chat';'switchhands'='Switch Hands';'drop'='Drop Weapon' }
+    foreach ($key in $Profile.keys.Keys) {
+        $action=$Profile.keys[$key]
+        if ($actions.ContainsKey($action)) { Row 'Controls' ($actions[$action]+' ('+$key+')') $key }
+    }
+    Row 'Included settings' 'Player preferences' ($Profile.user.Count.ToString()+' saved values')
+    Row 'Included settings' 'Audio, HUD and other preferences' ($Profile.machine.Count.ToString()+' saved values')
+    Row 'Included settings' 'Key bindings' ($Profile.keys.Count.ToString()+' saved bindings')
+    Row 'Included settings' 'Custom configs' ($Profile.gameFiles.Keys -join ', ')
+    Row 'Launch options' 'Steam Launch Options' $(if ($Profile.launchOptions) { $Profile.launchOptions } else { '(empty)' })
+    return ,$rows.ToArray()
+}
+function Show-Profile($Profile) {
+    Write-Host ('Profile: ' + $Profile.name)
+    # Preserve capture order without PowerShell 7-only Sort-Object -Stable.
+    $rows=Get-ProfileRows $Profile
+    foreach ($groupName in ($rows.Group | Select-Object -Unique)) {
+        Write-Host ''; Write-Host $groupName -ForegroundColor Cyan
+        foreach ($row in $rows | Where-Object { $_.Group -eq $groupName }) {
+            if ($row.Name -eq 'Steam Launch Options') { Write-Host $row.Value }
+            else { Write-Host ('  {0,-39} {1}' -f $row.Name,$row.Value) }
+        }
+    }
+}
+function Show-Changes($Before,$After) {
+    $old=@{}; foreach ($row in (Get-ProfileRows $Before)) { $old[$row.Group+'/'+$row.Name]=$row.Value }
+    $count=0
+    foreach ($row in (Get-ProfileRows $After)) {
+        $key=$row.Group+'/'+$row.Name
+        if (-not $old.ContainsKey($key) -or $old[$key] -cne $row.Value) { Write-Host ('  {0}: {1} -> {2}' -f $row.Name,$old[$key],$row.Value); $count++ }
+    }
+    foreach ($section in @('user','machine','keys','gameFiles','video')) {
+        if ((ConvertTo-Json -InputObject $Before[$section] -Depth 10 -Compress) -cne (ConvertTo-Json -InputObject $After[$section] -Depth 10 -Compress)) {
+            $label=@{user='Player preferences';machine='Audio, HUD and radar';keys='Controls';gameFiles='Custom configs';video='Display and video'}[$section]
+            Write-Host "  $label includes updated settings."
+            $count++
+        }
+    }
+    return $count
+}
+function Show-Issues($Issues) {
+    foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
+}
+function Show-Console($Profile) {
+    Show-Header 'Console alternative'
+    Write-Host ('Profile: ' + $Profile.name)
+    $path=Join-Path $script:Root ('console\'+(Get-ConsoleFilename $Profile))
+    Write-TextFile $path (Get-ConsoleCommands $Profile)
+    Write-Host "`n1. Open $path"
+    Write-Host '2. Copy its commands into the CS2 console in small batches and run them.'
+    Write-Host '3. Check your settings in CS2.'
+    Write-Host "`nSupported settings: crosshair, mouse, audio and controls."
+    Wait-Back
+}
+function Invoke-ApplyScreen {
+    :ChooseProfile while ($true) {
+    $profile=Select-Profile 'apply'; if ($null -eq $profile) { return }
+    $context=Get-Context; if ($null -eq $context) { return }
+    while ($true) {
+        $plan=New-ApplyPlan $profile $context
+        Show-Header 'Apply profile'; Show-Profile $profile
+        Write-Host ''; Show-Issues $plan.Video.Issues
+        $label=if (@($plan.Video.Issues | Where-Object {$_.Kind -eq 'Skipped'}).Count) {'Apply available settings'} else {'Apply'}
+        Write-Host "`n  [1] $label"; Write-Host '  [0] Back'
+        if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
+        $result=Invoke-ApplyPlan $plan
+        $failed=@($result.Issues | Where-Object {$_.Kind -eq 'Skipped'})
+        Show-Header $(if ($failed.Count) {'Profile partially saved'} else {'Profile saved for the next CS2 launch'})
+        Write-Host ('Profile: ' + $profile.name)
+        if ($result.Saved.Count) { Write-Host ('Saved and checked: ' + ($result.Saved -join ', ')) -ForegroundColor Green }
+        Show-Issues $result.Issues
+        Write-Host "`nLaunch options"
+        $launch=Get-EffectiveLaunchOptions $profile $plan
+        Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field)'})
+        Write-Host 'Paste into Steam > CS2 > Properties > General > Launch Options.'
+        if (@($result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
+        try { Set-Clipboard -Value $launch; Write-Host 'Copied to clipboard.' } catch { }
+        Write-Host "`nStart CS2 to use the saved settings."
+        if ($failed.Count) { Write-Host '  [1] Retry'; Write-Host '  [2] Console alternative' }
+        Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
+        $options=if ($failed.Count) {@(0,1,2,9)} else {@(0,9)}
+        switch (Read-Choice $options) {
+            0 { return }; 9 { $script:ExitRequested=$true; return }
+            2 { Show-Console $profile; return }
+        }
+    }
+    }
+}
+function Read-ProfileName {
+    while ($true) {
+        $name=Read-Host 'Profile name (0 to go back)'
+        if ($name -eq '0') { return '' }
+        $name=$name.Trim()
+        if (-not $name -or $name.Length -gt 100 -or $name -match '[\x00-\x1f]') { Write-Host 'Enter a profile name (1-100 characters).'; continue }
+        if (@($script:Pack.profiles | Where-Object {$_.name -eq $name}).Count) { Write-Host 'A profile with this name already exists.'; continue }
+        return $name
+    }
+}
+function Export-WithRetry($Pack,$Destination) {
+    while ($true) {
+        try { Export-Pack $Pack $Destination; return $true }
+        catch {
+            # The JSON may have been saved before a derived CMD failed. Keep memory
+            # consistent with that source of truth, including after returning to menu.
+            if (Test-Path -LiteralPath (Join-Path $Destination 'profiles.json')) {
+                try { $script:Pack=Read-Pack $Destination ''; $script:Root=$Destination } catch { }
+            }
+            Show-Header 'Config files could not all be updated'
+            Write-Host ('Folder: '+$Destination)
+            Write-Host 'Check folder permissions and close programs using these files, then retry.'
+            Write-Host "`n  [1] Retry"; Write-Host '  [0] Back to main menu'
+            if ((Read-Choice @(0,1)) -eq 0) { return $false }
+        }
+    }
+}
+function Invoke-SaveScreen($Update) {
+    :ChooseSource while ($true) {
+    $existing=$null
+    if ($Update) { $existing=Select-Profile 'update'; if ($null -eq $existing) { return }; $name=$existing.name }
+    else { Show-Header 'Create profile'; $name=Read-ProfileName; if (-not $name) { return } }
+    $context=Get-Context; if ($null -eq $context) { return }
+    $id=if ($existing) {$existing.id} else {''}
+    $profile=New-CapturedProfile $context $name $id
+    $destination=$script:Root
+    if (-not (Test-Path -LiteralPath (Join-Path $destination 'profiles.json')) -and -not $script:Pack.profiles.Count) { $destination=Join-Path $destination 'cs2-config' }
+    while ($true) {
+        if ($Update) {
+            Show-Header 'Review profile changes'; Write-Host ('Profile: '+$name)
+            $changes=Show-Changes $existing $profile
+            if (-not $changes) { Write-Host 'Profile is already up to date.'; Wait-Back; return }
+            Write-Host "`n  [1] Save changes"; Write-Host '  [2] View all settings'
+        } else {
+            Show-Header 'Review new profile'; Show-Profile $profile
+            Write-Host "`nSave to: $destination"
+            Write-Host '  [1] Create profile'; Write-Host '  [2] Change destination'
+        }
+        Write-Host '  [0] Back'
+        switch (Read-Choice @(0,1,2)) {
+            0 { continue ChooseSource }
+            2 {
+                if ($Update) { Show-Header 'Current settings on this PC'; Show-Profile $profile; Wait-Back }
+                else {
+                    $path=(Read-Host 'Folder (0 to go back)').Trim().Trim('"')
+                    if ($path -ne '0' -and $path) {
+                        $candidate=[IO.Path]::GetFullPath($path)
+                        if ($candidate -ne $script:Root -and (Test-Path -LiteralPath (Join-Path $candidate 'profiles.json'))) { Write-Host 'That folder already contains a config. Open its setup.cmd to add a profile.'; Wait-Back }
+                        else { $destination=$candidate }
+                    }
                 }
             }
-        }
-    }
-    return $null
-}
-
-# Parse a VDF-ish "key"  "value" file into an ordered map.
-function Read-VdfPairs($path) {
-    $map = [ordered]@{}
-    if (-not (Test-Path $path)) { return $map }
-    foreach ($line in Get-Content $path) {
-        if ($line -match '^\s*"([^"]+)"\s+"(.*)"\s*$') { $map[$matches[1]] = $matches[2] }
-    }
-    return $map
-}
-
-# ==================================================================================
-#  Which .cfg files are actually yours
-# ==================================================================================
-
-$StockPrefixes = @('gamemode_', 'valve_', 'subscribed_', 'banned_', 'default_',
-                   '360', 'joystick', 'undo_', 'config_default')
-$StockExact    = @('server.cfg', 'server_default.cfg', 'perftest.cfg', 'default.cfg',
-                   'config.cfg', 'video.cfg', 'videodefaults.cfg')
-
-function Get-UserCfgFiles($cfgDir) {
-    $out = New-Object System.Collections.Generic.List[object]
-    foreach ($f in (Get-ChildItem $cfgDir -Filter *.cfg -File | Sort-Object Name)) {
-        if ($Exclude -contains $f.Name) { continue }
-        $isStock = $false
-        if ($StockExact -contains $f.Name.ToLower()) { $isStock = $true }
-        foreach ($p in $StockPrefixes) {
-            if ($f.Name.ToLower().StartsWith($p)) { $isStock = $true; break }
-        }
-        if ($isStock -and -not ($Include -contains $f.Name)) { continue }
-        $out.Add($f)
-    }
-    return $out
-}
-
-# The main config is the one nothing else runs. Anything reached by `exec x` from another
-# config or from a keybind is a sub-mode (practice, knife, ...) and must not autoexec.
-function Find-MainCfg($files, $keysPath) {
-    # An existing autoexec is the most direct evidence: whatever it execs is the main one.
-    $auto = @($files | Where-Object { $_.Name.ToLower() -eq 'autoexec.cfg' })
-    if ($auto.Count -gt 0) {
-        $atext = [IO.File]::ReadAllText($auto[0].FullName)
-        foreach ($m in [regex]::Matches($atext, '(?i)\bexec\s+"?([A-Za-z0-9_\-\.]+)"?')) {
-            $n = $m.Groups[1].Value
-            if (-not $n.ToLower().EndsWith('.cfg')) { $n = "$n.cfg" }
-            if ($n.ToLower() -eq 'crosshair.cfg') { continue }
-            $hit = @($files | Where-Object { $_.Name.ToLower() -eq $n.ToLower() })
-            if ($hit.Count -eq 1) { return $hit[0].Name }
-        }
-    }
-    $referenced = New-Object System.Collections.Generic.HashSet[string]
-    $sources = New-Object System.Collections.Generic.List[string]
-    foreach ($f in $files) { $sources.Add([IO.File]::ReadAllText($f.FullName)) }
-    if ($keysPath -and (Test-Path $keysPath)) { $sources.Add([IO.File]::ReadAllText($keysPath)) }
-    foreach ($text in $sources) {
-        foreach ($m in [regex]::Matches($text, '(?i)\bexec\s+"?([A-Za-z0-9_\-\.]+)"?')) {
-            $n = $m.Groups[1].Value
-            if (-not $n.ToLower().EndsWith('.cfg')) { $n = "$n.cfg" }
-            [void]$referenced.Add($n.ToLower())
-        }
-    }
-    $candidates = @($files | Where-Object {
-        $_.Name.ToLower() -ne 'autoexec.cfg' -and -not $referenced.Contains($_.Name.ToLower())
-    })
-    if ($candidates.Count -eq 1) { return $candidates[0].Name }
-    return $null
-}
-
-# ==================================================================================
-#  Launch option portability
-# ==================================================================================
-
-# Flags that take a following value token.
-$ValueFlags = @('-threads', '-w', '-width', '-h', '-height', '-refresh', '-freq',
-                '-language', '-dxlevel', '-tickrate', '-maxplayers')
-
-# Flags worth dropping when the pack lands on unknown hardware.
-$NotPortable = @{
-    '-threads'                     = 'thread count is specific to this CPU'
-    '-high'                        = 'high priority can starve audio and input on a faster CPU'
-    '-refresh'                     = 'refresh rate differs on another monitor'
-    '-freq'                        = 'refresh rate differs on another monitor'
-    '-softparticlesdefaultoff'     = 'lowers quality to gain fps you may not need'
-    '-low'                         = 'lowers quality to gain fps you may not need'
-    '-lowmemory'                   = 'lowers quality to gain fps you may not need'
-    '-nod3d9ex'                    = 'legacy workaround, not needed'
-    '-disable_d3d9ex'              = 'legacy workaround, not needed'
-    '-dxlevel'                     = 'legacy, forces a renderer level'
-    '-processheap'                 = 'legacy workaround, not needed'
-    '+mat_disable_fancy_blending'  = 'lowers quality to gain fps you may not need'
-}
-
-$NotPortableRu = @{
-    '-threads'                     = 'число потоков подобрано под этот процессор'
-    '-high'                        = 'высокий приоритет на быстром процессоре мешает звуку и вводу'
-    '-refresh'                     = 'на другом мониторе другая частота обновления'
-    '-freq'                        = 'на другом мониторе другая частота обновления'
-    '-softparticlesdefaultoff'     = 'жертвует качеством ради кадров, которых там хватит'
-    '-low'                         = 'жертвует качеством ради кадров, которых там хватит'
-    '-lowmemory'                   = 'жертвует качеством ради кадров, которых там хватит'
-    '-nod3d9ex'                    = 'устаревший костыль, больше не нужен'
-    '-disable_d3d9ex'              = 'устаревший костыль, больше не нужен'
-    '-dxlevel'                     = 'устаревший флаг, жёстко задаёт уровень рендера'
-    '-processheap'                 = 'устаревший костыль, больше не нужен'
-    '+mat_disable_fancy_blending'  = 'жертвует качеством ради кадров, которых там хватит'
-}
-
-function Split-LaunchOptions($raw) {
-    $tokens = @($raw -split '\s+' | Where-Object { $_ -ne '' })
-    $items = New-Object System.Collections.Generic.List[object]
-    $i = 0
-    while ($i -lt $tokens.Count) {
-        $t = $tokens[$i]
-        $val = $null
-        # every +convar takes one value; -flags only when known to
-        if ($t.StartsWith('+') -or ($ValueFlags -contains $t.ToLower())) {
-            if ($i + 1 -lt $tokens.Count -and -not ($tokens[$i + 1] -match '^[+\-]')) {
-                $val = $tokens[$i + 1]; $i++
-            }
-        }
-        $items.Add([pscustomobject]@{ Flag = $t; Value = $val })
-        $i++
-    }
-    return $items
-}
-
-# cs2_machine_convars.vcfg is not carried by Steam Cloud - the name is literal, these
-# belong to the machine - so on another PC they are that machine's defaults. The radar
-# lives here, and so do fov, every volume, HUD scale and gamma.
-#
-# An allowlist rather than a denylist, because a pack gets published: the same file holds
-# "password", the direct-challenge key, cached ids and saved map lists. Anything Valve adds
-# later stays out until someone puts it in, which is the right way round for a file that
-# ends up in a public repository.
-$MachineKeep = @(
-    'cl_radar_', 'cl_hud_radar_', 'cl_hud_telemetry_', 'cl_teamid_overhead_',
-    'cl_radial_', 'cl_quickinventory_', 'cl_scoreboard_', 'cl_predict_',
-    'snd_', 'voice_', 'spec_', 'r_'
-)
-$MachineKeepExact = @(
-    'cl_hud_color', 'hud_scaling', 'hud_fastswitch', 'safezonex', 'safezoney',
-    'cl_teammate_colors_show', 'cl_force_spec_hud_color_to_team',
-    'cl_crosshair_friendly_warning', 'cl_show_observer_crosshair',
-    'cl_observed_bot_crosshair', 'cl_deathcampanel_position_dynamic',
-    'cl_sniper_show_inaccuracy', 'cl_sniper_delay_unscope',
-    'cl_show_clan_in_death_notice', 'cl_weapon_selection_rarity_color',
-    'cl_use_last_selected_weapon_slot_position', 'cl_color', 'cl_autohelp',
-    'cl_mute_enemy_team', 'cl_mute_all_but_friends_and_party', 'cl_enable_party_voice',
-    'cl_net_buffer_ticks', 'cl_timeout', 'cl_player_ping_mute',
-    'cl_ping_fade_deadzone', 'cl_ping_fade_distance', 'cl_versus_intro',
-    'cl_disable_round_end_report', 'cl_dm_buyrandomweapons', 'cl_hide_avatar_images',
-    'cl_allow_animated_avatars', 'cl_sanitize_player_names', 'mouse_inverty',
-    'fov_desired', 'viewmodel_presetpos', 'rate', 'volume', 'dsp_volume',
-    'fps_max', 'fps_max_ui', 'speaker_config', 'closecaption', 'sv_voiceenable',
-    'mapoverview_icon_scale', 'csgo_map_preview_scale'
-)
-# Beats both lists above, in case a prefix ever grows into something it should not reach.
-$MachineNever = @('password', 'ui_playsettings_directchallengekey')
-
-# Filtered line by line rather than parsed and written back out, so what survives keeps
-# the exact bytes CS2 wrote. Split-screen convars carry a $1..$4 suffix that is not part
-# of the name.
-function Select-MachineConvars($path) {
-    $out  = New-Object System.Text.StringBuilder
-    $kept = 0
-    foreach ($line in (Get-Content $path)) {
-        $m = [regex]::Match($line, '^\s*"([^"]+)"\s+"')
-        if (-not $m.Success) { [void]$out.AppendLine($line); continue }
-        $name = $m.Groups[1].Value
-        $base = $name -replace '\$\d+$', ''
-        if ($MachineNever -contains $base) { continue }
-        $keep = $false
-        foreach ($p in $MachineKeep) { if ($name.StartsWith($p)) { $keep = $true; break } }
-        if (-not $keep -and ($MachineKeepExact -contains $base)) { $keep = $true }
-        if ($keep) { [void]$out.AppendLine($line); $kept++ }
-    }
-    return [pscustomobject]@{ Text = $out.ToString(); Count = $kept }
-}
-
-function Get-PortableLaunchOptions($raw) {
-    $kept    = New-Object System.Collections.Generic.List[string]
-    $dropped = New-Object System.Collections.Generic.List[object]
-    foreach ($item in (Split-LaunchOptions $raw)) {
-        $key = $item.Flag.ToLower()
-        $text = $item.Flag
-        if ($null -ne $item.Value) { $text = "$($item.Flag) $($item.Value)" }
-        if ($NotPortable.ContainsKey($key)) {
-            $dropped.Add([pscustomobject]@{
-                Text  = $text
-                Why   = $NotPortable[$key]
-                WhyRu = $NotPortableRu[$key]
-            })
-        } else {
-            $kept.Add($text)
-        }
-    }
-    return [pscustomobject]@{ Portable = ($kept -join ' '); Dropped = $dropped }
-}
-
-# ==================================================================================
-#  Staying current
-# ==================================================================================
-
-# A pack carries this file as update-config.cmd, frozen at whatever the generator was on
-# the day the pack was built. Rebuilding with it rebuilds through a year-old generator,
-# and it stays that way forever: the copy it would replace itself with is that same stale
-# copy. This is the one thing a pack cannot fix on its own, so it is the one thing here
-# that reaches the network.
-#
-# Only when running as update-config.cmd. Started as setup.cmd this is either the copy in
-# the tool's own repository or a fresh download, and neither wants to be overwritten.
-
-function Get-EmbeddedVersion($text) {
-    if ("$text" -match "(?m)^\s*\`$TOOL_VERSION\s*=\s*'([0-9]+(\.[0-9]+){0,3})'") { return $matches[1] }
-    return $null
-}
-
-# https://github.com/me/tool  ->  the raw bytes of setup.cmd on its default branch.
-function Get-RawSetupUrl($repoUrl) {
-    if ("$repoUrl" -match '^https?://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$') {
-        return "https://raw.githubusercontent.com/$($matches[1])/$($matches[2])/main/setup.cmd"
-    }
-    return $null
-}
-
-function Update-Self {
-    if ($NoUpdate)                   { return }
-    if ($env:CS2CFG_UPDATED -eq '1') { return }   # this run is the relaunch; do not loop
-    if (-not $env:SELF)              { return }
-    if (-not (Test-Path $env:SELF))  { return }
-    if ([IO.Path]::GetFileName($env:SELF) -ne 'update-config.cmd') { return }
-
-    $url = Get-RawSetupUrl $TOOL_URL
-    if (-not $url) { return }
-
-    try {
-        # PowerShell 5.1 on Windows 10 still opens with TLS 1.0, which GitHub refuses.
-        [Net.ServicePointManager]::SecurityProtocol =
-            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        # Eight seconds. A PC behind a captive portal must not turn a rebuild into a hang.
-        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 8
-        $text = $resp.Content
-        if ($text -is [byte[]]) { $text = [Text.Encoding]::UTF8.GetString($text) }
-    } catch {
-        Info "$(Lbl 'Version' 'Версия')$TOOL_VERSION"
-        Info 'GitHub did not answer, staying on this one.' `
-             'GitHub не ответил, остаюсь на этой.'
-        return
-    }
-
-    $newVer = Get-EmbeddedVersion $text
-    if (-not $newVer) { return }
-    if ([version]$newVer -le [version]$TOOL_VERSION) {
-        Ok "$(Lbl 'Version' 'Версия')$TOOL_VERSION"
-        return
-    }
-
-    # Never swap in something that will not run. The marker is spelled in pieces on
-    # purpose: extraction takes the LAST match, so a literal here would become the marker.
-    $marker = '::' + 'PS1' + '::'
-    $i = $text.LastIndexOf($marker)
-    if ($i -lt 0) {
-        Warn "Version $newVer downloaded with no script in it. Staying on $TOOL_VERSION." `
-             "Версия $newVer скачалась без скрипта внутри. Остаюсь на $TOOL_VERSION."
-        return
-    }
-    $errors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseInput(
-        $text.Substring($i + $marker.Length), [ref]$null, [ref]$errors)
-    if ($errors -and $errors.Count -gt 0) {
-        Warn "Version $newVer does not parse. Staying on $TOOL_VERSION." `
-             "Версия $newVer не парсится. Остаюсь на $TOOL_VERSION."
-        return
-    }
-
-    # cmd garbles a batch file with LF-only line endings, and what arrives depends on how
-    # the repository was uploaded, so the endings are settled here instead of trusted.
-    $newTool = Join-Path $env:TEMP 'cs2-config-newtool.cmd'
-    [IO.File]::WriteAllText($newTool, (($text -replace "`r`n", "`n") -replace "`n", "`r`n"), $UTF8)
-    $kb = [math]::Round((Get-Item $newTool).Length / 1KB, 1)
-
-    Ok "$TOOL_VERSION -> $newVer, updating" "$TOOL_VERSION -> $newVer, обновляюсь"
-    Ok "setup.cmd  $kb KB, parses clean" "setup.cmd  $kb КБ, синтаксис в порядке"
-    Info 'Swapping this file and starting it again.' `
-         'Подменяю этот файл и запускаю его заново.'
-    # Exit code 3 is the launcher's signal to swap and relaunch. It cannot be done from
-    # here: cmd re-reads a batch file by byte offset after every command it runs.
-    exit 3
-}
-
-# ==================================================================================
-#  Go
-# ==================================================================================
-
-Head ("=== cs2-config setup $TOOL_VERSION ").PadRight(60, '=')
-Update-Self
-
-$steam = Get-SteamPath
-if (-not $steam) {
-    Die 'Steam not found in the registry. Is Steam installed?' `
-        'Steam не найден в реестре. Он вообще установлен?'
-}
-Ok "$(Lbl 'Steam' 'Steam')$steam"
-
-$cfgDir = Get-CS2CfgPath $steam
-if (-not $cfgDir) {
-    Die 'CS2 not found in any Steam library.' `
-        'CS2 не найдена ни в одной библиотеке Steam.'
-}
-Ok "$(Lbl 'CS2 cfg folder' 'Папка cfg')$cfgDir"
-
-$accountId = Get-SteamAccountId $steam
-$userCfgDir = $null
-if ($accountId) {
-    $userCfgDir = Join-Path $steam "userdata\$accountId\730\local\cfg"
-    Ok "$(Lbl 'Steam account' 'Аккаунт Steam')$accountId"
-} else {
-    Warn 'No CS2 userdata folder found. Video settings and cloud backup will be skipped.' `
-         'Папка userdata для CS2 не найдена. Настройки видео и копию Steam Cloud пропускаю.'
-}
-
-$convarsPath = $null
-$keysPath    = $null
-$videoPath   = $null
-$machinePath = $null
-if ($userCfgDir -and (Test-Path $userCfgDir)) {
-    $c = Join-Path $userCfgDir 'cs2_user_convars_0_slot0.vcfg'
-    $k = Join-Path $userCfgDir 'cs2_user_keys_0_slot0.vcfg'
-    $v = Join-Path $userCfgDir 'cs2_video.txt'
-    $m = Join-Path $userCfgDir 'cs2_machine_convars.vcfg'
-    if (Test-Path $c) { $convarsPath = $c }
-    if (Test-Path $k) { $keysPath    = $k }
-    if (Test-Path $v) { $videoPath   = $v }
-    if (Test-Path $m) { $machinePath = $m }
-}
-
-$convars = Read-VdfPairs $convarsPath
-
-# --- name -------------------------------------------------------------------------
-$playerName = $null
-if ($convars.Contains('name')) { $playerName = $convars['name'] }
-if (-not $Name) {
-    if ($playerName) { $Name = $playerName } else { $Name = 'me' }
-}
-$slug = ($Name -replace '[^A-Za-z0-9_\-]', '').ToLower()
-if ($slug -eq '') { $slug = 'me' }
-Ok "$(Lbl 'Pack name' 'Название')$Name"
-
-# The pack lands next to the launcher that made it. Two cases, and telling them apart
-# is what makes update-config.cmd work: launched from inside a pack, it rebuilds that
-# pack in place; launched from anywhere else, it creates cs2-config alongside itself.
-if (-not $OutDir) {
-    $here = $env:SELFDIR
-    if (-not $here) { $here = (Get-Location).Path }
-    $here = $here.TrimEnd('\')
-    if (Test-Path (Join-Path $here 'apply-config.cmd')) {
-        $OutDir = $here
-    } else {
-        $OutDir = Join-Path $here 'cs2-config'
-    }
-}
-
-if ((Test-Path $OutDir) -and -not $Force) {
-    $existing = @(Get-ChildItem $OutDir -Force -ErrorAction SilentlyContinue)
-    if ($existing.Count -gt 0) {
-        Warn "$OutDir already exists and is not empty." `
-             "Папка $OutDir уже есть и не пуста."
-        Info 'Its cfg/, video/, cloud-backup/ and generated files will be replaced.' `
-             'Папки cfg/, video/, cloud-backup/ и созданные файлы будут перезаписаны.'
-        Info 'Anything else in the folder is left alone.' `
-             'Остальное в папке не трогается.'
-    }
-}
-
-# --- configs ----------------------------------------------------------------------
-$userCfgs = Get-UserCfgFiles $cfgDir
-if ($userCfgs.Count -eq 0) {
-    Warn 'No user configs found in the game cfg folder.' `
-         'В папке cfg не нашлось ни одного твоего конфига.'
-    Info 'If you keep configs elsewhere, copy them into that folder and run this again.' `
-         'Если держишь их в другом месте — перенеси их туда и запусти снова.'
-} else {
-    Ok "$(Lbl 'Configs found' 'Найдено конфигов')$($userCfgs.Count)"
-    foreach ($f in $userCfgs) { Info "  $($f.Name)" }
-}
-
-if (-not $Main) { $Main = Find-MainCfg $userCfgs $keysPath }
-$hasOwnAutoexec = @($userCfgs | Where-Object { $_.Name.ToLower() -eq 'autoexec.cfg' }).Count -gt 0
-if ($Main) {
-    Ok "$(Lbl 'Main config' 'Главный конфиг')$Main"
-} elseif (-not $hasOwnAutoexec) {
-    Warn 'Could not tell which config is your main one.' `
-         'Не понял, какой из конфигов главный.'
-    Info 'autoexec will only load the crosshair. Point your own autoexec.cfg at it instead.' `
-         'autoexec подтянет только прицел. Пропиши нужный exec в своём autoexec.cfg.'
-}
-
-# --- crosshair ---------------------------------------------------------------------
-# CS2 packs a whole crosshair into 18 bytes and prints them as base-57. Rebuilding that
-# code here means the summary shows something you can paste into any client or send to
-# someone, instead of a count of convars that tells you nothing. Byte layout follows the
-# maintained reference implementation, github.com/akiver/csgo-sharecode.
-$XH_DICT = 'ABCDEFGHJKLMNOPQRSTUVWXYZabcdefhijkmnopqrstuvwxyz23456789'
-
-# Convars are strings, and CS2 writes booleans as true/false. Anything unreadable falls
-# back to 0, which is what the game itself would show for a convar it never wrote.
-function Cv-Num($map, $key) {
-    if (-not $map.Contains($key)) { return 0.0 }
-    $v = ([string]$map[$key]).Trim()
-    if ($v -eq 'true')  { return 1.0 }
-    if ($v -eq 'false') { return 0.0 }
-    $out = 0.0
-    if ([double]::TryParse($v, [Globalization.NumberStyles]::Float,
-                           [Globalization.CultureInfo]::InvariantCulture, [ref]$out)) { return $out }
-    return 0.0
-}
-# The format stores tenths and halves as whole bytes, so every field is scaled then
-# rounded. A slider set to 1.875223 comes back as 1.9, exactly as the game encodes it.
-function Cv-Scaled($map, $key, $scale) {
-    return [int][math]::Round((Cv-Num $map $key) * $scale, [MidpointRounding]::AwayFromZero)
-}
-function Cv-Flag($map, $key) {
-    if ((Cv-Num $map $key) -ne 0) { return 1 }
-    return 0
-}
-
-function Get-CrosshairShareCode($map) {
-    $b = New-Object byte[] 18
-    $b[1]  = 1                                                    # format version
-    $b[2]  = (Cv-Scaled $map 'cl_crosshairgap' 10) -band 0xff      # signed, wraps
-    $b[3]  = (Cv-Scaled $map 'cl_crosshair_outlinethickness' 2) -band 0xff
-    $b[4]  = (Cv-Scaled $map 'cl_crosshaircolor_r' 1) -band 0xff
-    $b[5]  = (Cv-Scaled $map 'cl_crosshaircolor_g' 1) -band 0xff
-    $b[6]  = (Cv-Scaled $map 'cl_crosshaircolor_b' 1) -band 0xff
-    $b[7]  = (Cv-Scaled $map 'cl_crosshairalpha' 1) -band 0xff
-    $b[8]  = ((Cv-Scaled $map 'cl_crosshair_dynamic_splitdist' 1) -band 7) -bor
-             ((Cv-Flag $map 'cl_crosshair_recoil') -shl 7)
-    $b[9]  = (Cv-Scaled $map 'cl_fixedcrosshairgap' 10) -band 0xff # signed, wraps
-    $b[10] = ((Cv-Scaled $map 'cl_crosshaircolor' 1) -band 7) -bor
-             ((Cv-Flag $map 'cl_crosshair_drawoutline') -shl 3) -bor
-             (((Cv-Scaled $map 'cl_crosshair_dynamic_splitalpha_innermod' 10) -band 0xF) -shl 4)
-    $b[11] = ((Cv-Scaled $map 'cl_crosshair_dynamic_splitalpha_outermod' 10) -band 0xF) -bor
-             (((Cv-Scaled $map 'cl_crosshair_dynamic_maxdist_splitratio' 10) -band 0xF) -shl 4)
-    $b[12] = (Cv-Scaled $map 'cl_crosshairthickness' 10) -band 0xff
-    $b[13] = (((Cv-Scaled $map 'cl_crosshairstyle' 1) -band 7) -shl 1) -bor
-             ((Cv-Flag $map 'cl_crosshairdot') -shl 4) -bor
-             ((Cv-Flag $map 'cl_crosshairgap_useweaponvalue') -shl 5) -bor
-             ((Cv-Flag $map 'cl_crosshairusealpha') -shl 6) -bor
-             ((Cv-Flag $map 'cl_crosshair_t') -shl 7)
-    $b[14] = (Cv-Scaled $map 'cl_crosshairsize' 10) -band 0xff
-
-    # Byte 0 is a checksum over the rest; CS2 refuses the code without it.
-    $sum = 0
-    for ($i = 1; $i -lt 18; $i++) { $sum += $b[$i] }
-    $b[0] = $sum -band 0xff
-
-    $total = [System.Numerics.BigInteger]::Zero
-    foreach ($x in $b) { $total = $total * 256 + [int]$x }
-    $out = ''
-    for ($i = 0; $i -lt 25; $i++) {
-        $out += $XH_DICT[[int]($total % 57)]
-        $total = [System.Numerics.BigInteger]::Divide($total, 57)
-    }
-    return "CSGO-$($out.Substring(0,5))-$($out.Substring(5,5))-$($out.Substring(10,5))-" +
-           "$($out.Substring(15,5))-$($out.Substring(20,5))"
-}
-
-$crosshair = [ordered]@{}
-foreach ($k in $convars.Keys) {
-    if ($k -match '^(cl_crosshair|cl_fixedcrosshairgap)') { $crosshair[$k] = $convars[$k] }
-}
-if ($crosshair.Count -gt 0) {
-    $shareCode = $null
-    try { $shareCode = Get-CrosshairShareCode $convars } catch { $shareCode = $null }
-    if ($shareCode) {
-        Ok "$(Lbl 'Crosshair' 'Прицел')$shareCode"
-    } else {
-        Ok "$(Lbl 'Crosshair' 'Прицел')$($crosshair.Count) convars captured" `
-           "$(Lbl 'Crosshair' 'Прицел')переменных снято: $($crosshair.Count)"
-    }
-} else {
-    Warn 'No crosshair convars found. Launch CS2 once so it writes its settings.' `
-         'Переменные прицела не найдены. Зайди в CS2 один раз, чтобы она их записала.'
-}
-
-# --- launch options ------------------------------------------------------------------
-$launchRaw = $null
-if ($accountId) { $launchRaw = Get-LaunchOptions $steam $accountId }
-$launch = $null
-if ($launchRaw) {
-    $launch = Get-PortableLaunchOptions $launchRaw
-    Ok "$(Lbl 'Launch options' 'Параметры запуска')captured" `
-       "$(Lbl 'Launch options' 'Параметры запуска')считаны"
-    # Said here rather than in the pack README, which is read by whoever receives the
-    # pack; this concerns whoever builds it, and only once.
-    if ($launch.Dropped.Count -gt 0) {
-        Info '  left out of the portable line, they do not travel well:' `
-             '  не вошли в переносимый вариант, плохо переносятся:'
-        foreach ($d in $launch.Dropped) {
-            Info "    $($d.Text) — $($d.Why)" "    $($d.Text) — $($d.WhyRu)"
-        }
-    }
-} else {
-    Warn 'No launch options set for CS2 (or none found).' `
-         'Параметры запуска у CS2 не заданы, либо найти их не вышло.'
-}
-
-# ==================================================================================
-#  Assemble
-# ==================================================================================
-
-Head '--- building pack ---' '--- собираю набор ---'
-
-foreach ($sub in @('cfg', 'video', 'cloud-backup', 'machine')) {
-    $p = Join-Path $OutDir $sub
-    if (Test-Path $p) { Remove-Item $p -Recurse -Force }
-    New-Item -ItemType Directory -Force $p | Out-Null
-}
-
-$packCfg = Join-Path $OutDir 'cfg'
-foreach ($f in $userCfgs) {
-    if ($f.Name.ToLower() -eq 'autoexec.cfg') { continue }   # rebuilt below
-    Copy-Item $f.FullName $packCfg -Force
-}
-
-# crosshair.cfg
-if ($crosshair.Count -gt 0) {
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('// Crosshair, read from your CS2 settings by cs2-config.')
-    [void]$sb.AppendLine('// Applying this needs no share code.')
-    [void]$sb.AppendLine('')
-    foreach ($k in $crosshair.Keys) { [void]$sb.AppendLine("$k `"$($crosshair[$k])`"") }
-    [IO.File]::WriteAllText((Join-Path $packCfg 'crosshair.cfg'), $sb.ToString(), $UTF8)
-}
-
-# autoexec.cfg: keep the user's own content, then add what is missing
-$autoBody = ''
-$ownAutoexec = @($userCfgs | Where-Object { $_.Name.ToLower() -eq 'autoexec.cfg' })
-if ($ownAutoexec.Count -gt 0) { $autoBody = [IO.File]::ReadAllText($ownAutoexec[0].FullName).TrimEnd() }
-
-$needed = New-Object System.Collections.Generic.List[string]
-if ($crosshair.Count -gt 0 -and $autoBody -notmatch '(?i)\bexec\s+"?crosshair') { $needed.Add('exec crosshair') }
-if ($Main) {
-    $mainBare = [IO.Path]::GetFileNameWithoutExtension($Main)
-    if ($autoBody -notmatch "(?i)\bexec\s+`"?$([regex]::Escape($mainBare))") { $needed.Add("exec $mainBare") }
-}
-
-$auto = New-Object System.Text.StringBuilder
-if ($autoBody -ne '') {
-    [void]$auto.AppendLine($autoBody)
-    # Only when there is something to put under it. Otherwise applying the pack and then
-    # rebuilding it leaves a marker with nothing beneath, and another one every round.
-    if ($needed.Count -gt 0) {
-        [void]$auto.AppendLine('')
-        [void]$auto.AppendLine('// ---- added by cs2-config ----')
-    }
-} else {
-    [void]$auto.AppendLine('// CS2 runs this file automatically on startup.')
-    [void]$auto.AppendLine('// Generated by cs2-config.')
-    [void]$auto.AppendLine('')
-}
-foreach ($line in $needed) { [void]$auto.AppendLine($line) }
-if ($autoBody -eq '') {
-    [void]$auto.AppendLine('')
-    [void]$auto.AppendLine('host_writeconfig')
-} elseif ($needed.Count -gt 0 -and $autoBody -match '(?i)\bhost_writeconfig\b') {
-    # Their own host_writeconfig ran before the lines we just appended, so it would not
-    # persist them. Run it once more at the end.
-    [void]$auto.AppendLine('host_writeconfig')
-}
-[IO.File]::WriteAllText((Join-Path $packCfg 'autoexec.cfg'), $auto.ToString(), $UTF8)
-
-# video + cloud backup
-$hasVideo = $false
-if ($videoPath) {
-    Copy-Item $videoPath (Join-Path $OutDir 'video') -Force
-    $hasVideo = $true
-}
-$cloudFiles = @()
-foreach ($p in @($convarsPath, $keysPath)) {
-    if (-not $p) { continue }
-    $dest = Join-Path (Join-Path $OutDir 'cloud-backup') (Split-Path -Leaf $p)
-    if ($Anonymize -and $p -eq $convarsPath) {
-        $text = [IO.File]::ReadAllText($p) -replace '(?m)^(\s*"name"\s+")[^"]*(")', '${1}player${2}'
-        [IO.File]::WriteAllText($dest, $text, $UTF8)
-    } else {
-        Copy-Item $p $dest -Force
-    }
-    $cloudFiles += (Split-Path -Leaf $p)
-}
-$machineCount = 0
-if ($machinePath) {
-    $sel = Select-MachineConvars $machinePath
-    if ($sel.Count -gt 0) {
-        [IO.File]::WriteAllText((Join-Path (Join-Path $OutDir 'machine') 'cs2_machine_convars.vcfg'), $sel.Text, $UTF8)
-        $machineCount = $sel.Count
-    }
-}
-if ($Anonymize) {
-    Ok "$(Lbl 'Anonymized' 'Обезличено')in-game name stripped" `
-       "$(Lbl 'Anonymized' 'Обезличено')игровой ник убран"
-}
-
-$packedCfgs = @(Get-ChildItem $packCfg -Filter *.cfg | Sort-Object Name)
-Ok "$(Lbl 'cfg/' 'cfg/')$($packedCfgs.Count) files" "$(Lbl 'cfg/' 'cfg/')файлов: $($packedCfgs.Count)"
-if ($hasVideo)         { Ok "$(Lbl 'video/' 'video/')cs2_video.txt" }
-if ($machineCount -gt 0) {
-    Ok "$(Lbl 'machine/' 'machine/')$machineCount convars Steam Cloud does not carry" `
-       "$(Lbl 'machine/' 'machine/')переменных, которые не возит Steam Cloud: $machineCount"
-}
-if ($cloudFiles.Count) {
-    Ok "$(Lbl 'cloud-backup/' 'cloud-backup/')$($cloudFiles.Count) files" `
-       "$(Lbl 'cloud-backup/' 'cloud-backup/')файлов: $($cloudFiles.Count)"
-}
-
-# ==================================================================================
-#  Generate apply-config.ps1
-# ==================================================================================
-
-function Read-Payload($path) {
-    $text = [IO.File]::ReadAllText($path)
-    foreach ($line in ($text -split "`r?`n")) {
-        if ($line -match "^\s*'@") { Die "$path has a line starting with '@ and cannot be embedded" }
-    }
-    return $text.TrimEnd("`r", "`n")
-}
-
-function Emit-Map($varName, $dir, $filter) {
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine("`$$varName = [ordered]@{}")
-    if (Test-Path $dir) {
-        foreach ($f in (Get-ChildItem $dir -Filter $filter -File | Sort-Object Name)) {
-            [void]$sb.AppendLine("`$$varName['$($f.Name)'] = @'")
-            [void]$sb.AppendLine((Read-Payload $f.FullName))
-            [void]$sb.AppendLine("'@")
-        }
-    }
-    return $sb.ToString()
-}
-
-$payload  = Emit-Map 'GameCfg'  $packCfg                               '*.cfg'
-$payload += Emit-Map 'VideoCfg'   (Join-Path $OutDir 'video')          '*.txt'
-$payload += Emit-Map 'CloudCfg'   (Join-Path $OutDir 'cloud-backup')   '*.vcfg'
-$payload += Emit-Map 'MachineCfg' (Join-Path $OutDir 'machine')        '*.vcfg'
-
-$launchPortable = ''
-if ($launch) { $launchPortable = $launch.Portable }
-
-# A video config records the GPU it came from - VendorID, DeviceID, knowndevice - and on
-# other hardware CS2 decides the file is not its own, re-detects and rewrites it, taking
-# the resolution with it. -w/-h are read before any of that happens and do not care what
-# card is in the machine, which is why they are not in $NotPortable: on a foreign PC they
-# are the only thing that holds the resolution. Added here when Steam has none set.
-if ($videoPath -and ($launchPortable -notmatch '(^|\s)-(w|width|h|height)(\s|$)')) {
-    $vset = Read-VdfPairs $videoPath
-    $vw = $vset['setting.defaultres']
-    $vh = $vset['setting.defaultresheight']
-    if ($vw -and $vh) {
-        $res = "-w $vw -h $vh"
-        if ($vset['setting.fullscreen'] -eq '1') { $res += ' -fullscreen' }
-        $launchPortable = ("$launchPortable $res").Trim()
-        Ok "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, added to the launch options" `
-           "$(Lbl 'Resolution' 'Разрешение')${vw}x${vh}, добавлено в параметры запуска"
-    }
-}
-
-# CS2 is supposed to run autoexec.cfg by itself, and mostly does. Everything in a pack
-# hangs off that one file, so on a PC you get for an hour it is worth not depending on
-# "mostly": +exec autoexec costs nothing and runs it a second time at worst.
-if ($launchPortable -notmatch '(?i)(^|\s)\+exec\s+autoexec(\s|$)') {
-    $launchPortable = ("$launchPortable +exec autoexec").Trim()
-}
-
-$restoreConsts =
-    "`$PackName      = '$($Name -replace "'", "''")'`r`n" +
-    "`$LaunchOptions = '$($launchPortable -replace "'", "''")'`r`n" +
-    "`$ToolUrl       = '$TOOL_URL'`r`n" +
-    "`$PackTool      = '$TOOL_VERSION'`r`n"
-
-$restoreHead = @'
-<#
-    CS2 settings pack. SELF-CONTAINED - every config is embedded below, so this one
-    file is all you need on another PC. No git, no ZIP, no internet.
-
-    Double-click apply-config.cmd and pick from the menu, or pass a switch to it
-    and the menu is skipped:
-
-      apply-config.cmd            configs only
-      apply-config.cmd -Video     also apply resolution and quality
-      apply-config.cmd -Convars   also restore sensitivity and binds (if Steam Cloud failed)
-      apply-config.cmd -Check     show what differs, write nothing
-      apply-config.cmd -Undo      put this PC back the way you found it
-
-    GENERATED FILE. Rebuild it with update-config.cmd instead of editing it.
-#>
-param(
-    [switch]$Video,
-    [switch]$Convars,
-    [switch]$Check,
-    [switch]$Undo
-)
-
-$ErrorActionPreference = 'Stop'
-$BackupRoot = Join-Path $env:TEMP 'cs2-config-apply-backup'
-$Backup     = Join-Path $BackupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
-
-# The Windows display language decides, and nothing else. Keyboard layouts are not
-# consulted. Every message carries both languages at the call site; passing only English
-# means "same in both", which is what you want for paths and file names.
-$Lang = 'en'
-try {
-    if ((Get-UICulture).TwoLetterISOLanguageName -eq 'ru') { $Lang = 'ru' }
-} catch { }
-
-function L($en, $ru) {
-    if ($Lang -eq 'ru' -and $ru) { return $ru }
-    return $en
-}
-function Info($en, $ru) { Write-Host "     $(L $en $ru)" }
-function Ok  ($en, $ru) { Write-Host "OK   $(L $en $ru)" -ForegroundColor Green }
-function Warn($en, $ru) { Write-Host "WARN $(L $en $ru)" -ForegroundColor Yellow }
-function Die ($en, $ru) { Write-Host "FAIL $(L $en $ru)" -ForegroundColor Red; exit 1 }
-
-# Status words sit in a fixed column, and the Russian ones are longer. Pad, do not count.
-function Mark($en, $ru) { return (L $en $ru).PadRight(11) }
-
-# Windows does not care how a path is spelled, but whoever reads the output does. Steam
-# writes SteamPath into the registry all lower case and with forward slashes, like
-# c:/program files (x86)/steam. The slashes are a substitution; how the folders are really
-# spelled only the filesystem knows, so every segment is looked up in its parent.
-function Get-TruePath($path) {
-    $dir = New-Object IO.DirectoryInfo $path
-    if (-not $dir.Exists) { return $path }
-    $parts = New-Object System.Collections.Generic.List[string]
-    while ($dir.Parent) {
-        $hit = $dir.Parent.GetDirectories($dir.Name)
-        if ($hit.Count -lt 1) { return $path }
-        $parts.Insert(0, $hit[0].Name)
-        $dir = $dir.Parent
-    }
-    # Only a drive letter is worth upper-casing. A UNC root is spelled by its server.
-    $root = $dir.Name.TrimEnd('\')
-    if ($root -match '^[a-z]:$') { $root = $root.ToUpper() }
-    if ($parts.Count -eq 0) { return "$root\" }
-    return $root + '\' + ($parts -join '\')
-}
-
-function Get-SteamPath {
-    foreach ($k in @('HKCU:\Software\Valve\Steam',
-                     'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam',
-                     'HKLM:\SOFTWARE\Valve\Steam')) {
-        if (Test-Path $k) {
-            $p = Get-ItemProperty $k
-            $raw = $p.SteamPath
-            if (-not $raw) { $raw = $p.InstallPath }
-            if ($raw) { return Get-TruePath (($raw -replace '/', '\').TrimEnd('\')) }
-        }
-    }
-    return $null
-}
-
-function Get-CS2CfgPath($steam) {
-    $roots = New-Object System.Collections.Generic.List[string]
-    $roots.Add($steam)
-    $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
-    if (Test-Path $vdf) {
-        foreach ($line in Get-Content $vdf) {
-            if ($line -match '"path"\s+"(.+?)"') { $roots.Add(($matches[1] -replace '\\\\', '\')) }
-        }
-    }
-    foreach ($r in $roots) {
-        $p = Join-Path $r 'steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg'
-        if (Test-Path $p) { return Get-TruePath $p }
-    }
-    return $null
-}
-
-function Get-UserCfgPath($steam) {
-    if (Test-Path 'HKCU:\Software\Valve\Steam\ActiveProcess') {
-        $id = (Get-ItemProperty 'HKCU:\Software\Valve\Steam\ActiveProcess').ActiveUser
-        if ($id -and $id -ne 0) {
-            $p = Join-Path $steam "userdata\$id\730\local\cfg"
-            if (Test-Path $p) { return $p }
-        }
-    }
-    $ud = Join-Path $steam 'userdata'
-    if (-not (Test-Path $ud)) { return $null }
-    $best = Get-ChildItem $ud -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.FullName '730\local\cfg') } |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($best) { return (Join-Path $best.FullName '730\local\cfg') }
-    return $null
-}
-
-$UTF8 = New-Object System.Text.UTF8Encoding($false)
-
-function Normalize($text) { return ($text -replace "`r`n", "`n").TrimEnd("`n", " ", "`t") }
-
-function Compare-Payload($map, $destDir, $label) {
-    if (-not $destDir) { return }
-    foreach ($name in $map.Keys) {
-        $dest = Join-Path $destDir $name
-        if (-not (Test-Path $dest)) { Write-Host "     $(Mark 'MISSING' 'НЕТ ВОВСЕ')$label/$name" -ForegroundColor Yellow }
-        elseif ((Normalize ([IO.File]::ReadAllText($dest))) -eq (Normalize $map[$name])) {
-            Info "$(Mark 'same' 'совпадает')$label/$name"
-        }
-        else { Write-Host "     $(Mark 'DIFFERENT' 'ОТЛИЧАЕТСЯ')$label/$name" -ForegroundColor Yellow }
-    }
-}
-
-function Write-Payload($map, $destDir, $tag) {
-    $bdir  = Join-Path $Backup $tag
-    $added = New-Object System.Collections.Generic.List[string]
-    foreach ($name in $map.Keys) {
-        $dest = Join-Path $destDir $name
-        if (Test-Path $dest) {
-            New-Item -ItemType Directory -Force $bdir | Out-Null
-            Copy-Item $dest $bdir -Force
-        } else {
-            # Nothing to back up: remember it so -Undo can delete it again.
-            $added.Add($name)
-        }
-        [IO.File]::WriteAllText($dest, ($map[$name] -replace "`r?`n", "`r`n") + "`r`n", $UTF8)
-        Info $name
-    }
-    if ($added.Count -gt 0) {
-        New-Item -ItemType Directory -Force $bdir | Out-Null
-        [IO.File]::WriteAllLines((Join-Path $bdir '_added.txt'), $added)
-    }
-}
-
-# A video config is two things in one file: the settings you picked, and a fingerprint
-# of the PC that wrote them - vendor and device id of the card, monitor, refresh rate.
-# Handed a file whose fingerprint belongs to somebody else's card, CS2 decides the file is
-# not its own, re-detects the hardware and writes its own defaults over all of it. That is
-# why the video settings never survived on a club PC. So the fingerprint is never copied:
-# those lines come from the file this PC already has, only the settings come from the pack.
-$VideoLocalKeys = @('Version', 'VendorID', 'DeviceID', 'Autoconfig',
-                    'setting.knowndevice', 'setting.monitor_index',
-                    'setting.refreshrate_numerator', 'setting.refreshrate_denominator',
-                    'setting.high_dpi')
-
-function Get-VideoIdentity($destPath) {
-    $map = [ordered]@{}
-    if (Test-Path $destPath) {
-        foreach ($line in ([IO.File]::ReadAllText($destPath) -split "`r?`n")) {
-            if ($line -match '^\s*"([^"]+)"\s+"(.*)"\s*$' -and $VideoLocalKeys -contains $matches[1]) {
-                $map[$matches[1]] = $matches[2]
-            }
-        }
-        # Without those two there is no fingerprint to keep, and the file is of no use.
-        if ($map.Contains('VendorID') -and $map.Contains('DeviceID')) { return $map }
-    }
-    # No file yet: this account has never started CS2 here. Windows knows the card anyway.
-    $map  = [ordered]@{}
-    $best = $null
-    try {
-        foreach ($c in (Get-CimInstance Win32_VideoController -ErrorAction Stop)) {
-            if ("$($c.PNPDeviceID)" -notmatch 'VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') { continue }
-            $ven = [Convert]::ToInt32($matches[1], 16)
-            $dev = [Convert]::ToInt32($matches[2], 16)
-            # 4318 is NVIDIA, 4098 is AMD. A machine that has one of those renders the game
-            # on it, and the Intel chip listed next to it only drives the desktop.
-            $rank = 0
-            if ($ven -eq 4318 -or $ven -eq 4098) { $rank = 1 }
-            if (-not $best -or $rank -gt $best.Rank) {
-                $best = [pscustomobject]@{ Rank = $rank; Ven = $ven; Dev = $dev; Hz = $c.CurrentRefreshRate }
-            }
-        }
-    } catch { }
-    if ($best) {
-        $map['VendorID']            = "$($best.Ven)"
-        $map['DeviceID']            = "$($best.Dev)"
-        $map['setting.knowndevice'] = '1'
-        if ($best.Hz -and [int]$best.Hz -gt 0) {
-            $map['setting.refreshrate_numerator']   = "$([int]$best.Hz * 1000)"
-            $map['setting.refreshrate_denominator'] = '1000'
-        }
-    }
-    return $map
-}
-
-function Merge-VideoCfg($packText, $destPath) {
-    $local = Get-VideoIdentity $destPath
-    if ($local.Count -eq 0) { return $packText }
-    $out = New-Object System.Collections.Generic.List[string]
-    foreach ($line in ($packText -split "`r?`n")) {
-        if ($line -match '^(\s*"([^"]+)"\s+")(.*)("\s*)$' -and $local.Contains($matches[2])) {
-            $out.Add($matches[1] + $local[$matches[2]] + $matches[4])
-        } else {
-            $out.Add($line)
-        }
-    }
-    return ($out -join "`n")
-}
-
-# The pack as it applies to this one PC. -Check is given the same thing, otherwise it
-# reports a difference on lines that are never going to be written.
-function Get-VideoPayload($map, $destDir) {
-    if (-not $destDir) { return $map }
-    $out = [ordered]@{}
-    foreach ($name in $map.Keys) { $out[$name] = Merge-VideoCfg $map[$name] (Join-Path $destDir $name) }
-    return $out
-}
-
-# CS2 keeps its own copy of these files in memory and writes them out when it exits, so
-# anything written underneath a running game is gone the moment the game is closed.
-function Test-CS2Running {
-    return [bool](Get-Process -Name 'cs2' -ErrorAction SilentlyContinue)
-}
-
-'@
-
-$restoreBody = @'
-
-# No switch on the command line means somebody double-clicked the launcher, so ask. The
-# menu lives here and not in the .cmd above it: this half already knows the display
-# language, and cmd would need its own detection to say the same thing in Russian.
-if (-not ($Video -or $Convars -or $Check -or $Undo)) {
-    Write-Host ''
-    Write-Host (L '  CS2 CONFIG' '  КОНФИГ CS2') -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host (L '    [1]  Apply everything     configs, crosshair, resolution and quality' `
-                  '    [1]  Применить всё        конфиги, прицел, разрешение и качество')
-    Write-Host (L '    [2]  Apply configs only   the video settings of this PC stay as they are' `
-                  '    [2]  Только конфиги       настройки видео этого ПК останутся как есть')
-    Write-Host (L '    [3]  Check                show what differs, change nothing' `
-                  '    [3]  Проверить            показать различия, ничего не менять')
-    Write-Host (L '    [4]  Undo                 put this PC back the way you found it' `
-                  '    [4]  Откатить             вернуть ПК в то состояние, в котором застал')
-    Write-Host ''
-    $pick = Read-Host (L '  Choose 1-4, or just press Enter for 1' `
-                         '  Выбери 1-4 или просто нажми Enter для 1')
-    # "$pick", not $pick: with no console to read from, Read-Host hands back null, and
-    # calling .Trim() on that would end the run with a stack trace instead of a default.
-    switch ("$pick".Trim()) {
-        '2'     { }
-        '3'     { $Check = $true }
-        '4'     { $Undo  = $true }
-        default { $Video = $true }
-    }
-}
-
-Write-Host ''
-Write-Host (('=== ' + (L 'CS2 settings' 'Конфиг CS2') + ": $PackName ").PadRight(60, '=')) -ForegroundColor Cyan
-
-$steam = Get-SteamPath
-if (-not $steam) { Die 'Steam not found in the registry. Is Steam installed?' `
-                       'Steam не найден в реестре. Он вообще установлен?' }
-$cfgDir = Get-CS2CfgPath $steam
-if (-not $cfgDir) { Die 'CS2 not found in any Steam library. Install CS2 first.' `
-                        'CS2 не найдена ни в одной библиотеке Steam. Сначала установи игру.' }
-$userCfg = Get-UserCfgPath $steam
-Ok ((L 'CS2 cfg folder' 'Папка cfg').PadRight(17) + $cfgDir)
-
-# Written now, overwritten on exit: worth saying before the writing starts, not after.
-if ((-not ($Check -or $Undo)) -and (Test-CS2Running)) {
-    Warn 'CS2 is running. Close it now: on the way out it writes its own video and convar files over everything below.' `
-         'CS2 запущена. Закрой её сейчас: при выходе она перезапишет своими файлами всё, что ниже.'
-}
-
-# --- undo -------------------------------------------------------------------------
-if ($Undo) {
-    if (-not (Test-Path $BackupRoot)) { Die 'No backup found on this PC. Nothing to undo.' `
-                                            'На этом ПК нет резервной копии. Откатывать нечего.' }
-    $last = Get-ChildItem $BackupRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $last) { Die 'No backup found on this PC. Nothing to undo.' `
-                          'На этом ПК нет резервной копии. Откатывать нечего.' }
-    Write-Host ''
-    Write-Host (L "Restoring the files this PC had before, from $($last.Name)" `
-                  "Возвращаю файлы, которые были на этом ПК, из копии $($last.Name)")
-    $map = @{ 'cfg' = $cfgDir; 'video' = $userCfg; 'cloud' = $userCfg; 'machine' = $userCfg }
-    foreach ($tag in $map.Keys) {
-        $dir = Join-Path $last.FullName $tag
-        if (-not (Test-Path $dir) -or -not $map[$tag]) { continue }
-        foreach ($f in Get-ChildItem $dir -File) {
-            if ($f.Name -eq '_added.txt') { continue }
-            Copy-Item $f.FullName (Join-Path $map[$tag] $f.Name) -Force
-            Info "$(Mark 'restored' 'возвращён')$tag/$($f.Name)"
-        }
-        $addedList = Join-Path $dir '_added.txt'
-        if (Test-Path $addedList) {
-            foreach ($n in (Get-Content $addedList)) {
-                if ($n.Trim() -eq '') { continue }
-                $victim = Join-Path $map[$tag] $n
-                if (Test-Path $victim) { Remove-Item $victim -Force; Info "$(Mark 'removed' 'удалён')$tag/$n" }
+            1 {
+                $next=Copy-Data $script:Pack
+                if ($Update) {
+                    for ($i=0;$i -lt $next.profiles.Count;$i++) { if ($next.profiles[$i].id -eq $profile.id) { $next.profiles[$i]=$profile } }
+                } else { $next.profiles=@($next.profiles)+@($profile) }
+                if (-not $script:Pack.profiles.Count) { $next.name=Split-Path -Leaf $destination }
+                if (-not (Export-WithRetry $next $destination)) { return }
+                $script:Pack=$next; $script:Root=$destination
+                Show-Header $(if ($Update) {'Profile updated'} else {'Profile created'})
+                Write-Host ('Profile: '+$name); Write-Host ('Folder: '+$destination)
+                Write-Host 'Open apply-config.cmd to apply a profile.'
+                Write-Host 'Open update-config.cmd to update it.'
+                Write-Host "`n  [1] Publishing instructions"; Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
+                switch (Read-Choice @(0,1,9)) {
+                    1 { Show-Header 'Update your config on GitHub'; Write-Host '1. Open your config repository on GitHub.'; Write-Host '2. Choose Add file > Upload files.'; Write-Host '3. Upload the updated config folder contents.'; Write-Host '4. Choose Commit changes.'; Wait-Back }
+                    9 { $script:ExitRequested=$true }
+                }
+                return
             }
         }
     }
-    Ok 'Undo complete. This PC is back to how you found it.' `
-       'Откат выполнен. ПК в том состоянии, в котором ты его застал.'
-    exit 0
-}
-
-# --- check ------------------------------------------------------------------------
-if ($Check) {
-    Write-Host ''
-    Write-Host (L 'Comparing this pack against the PC (nothing will be written):' `
-                  'Сравниваю набор с тем, что на ПК (ничего не записывается):')
-    Compare-Payload $GameCfg  $cfgDir  'cfg'
-    if ($userCfg) {
-        Compare-Payload (Get-VideoPayload $VideoCfg $userCfg) $userCfg 'video'
-        Compare-Payload $MachineCfg $userCfg 'machine'
-        Compare-Payload $CloudCfg   $userCfg 'cloud'
-    }
-    Write-Host ''
-    Info 'Run without -Check to apply.' 'Запусти без -Check, чтобы применить.'
-    exit 0
-}
-
-# --- apply ------------------------------------------------------------------------
-Write-Host ''
-Write-Host (L 'Writing configs:' 'Пишу конфиги:')
-Write-Payload $GameCfg $cfgDir 'cfg'
-Ok 'Configs in place. Crosshair included, no share code needed.' `
-   'Конфиги на месте. Прицел внутри, код обмена не нужен.'
-
-# Radar, fov, volumes, HUD scale. Steam Cloud does not carry these, so on any PC but the
-# one they came from they are that machine's defaults unless this writes them. Applied
-# with the configs rather than behind -Convars: nothing here belongs to Steam, so nothing
-# overwrites it on the way out - only CS2 itself does, which is why it has to be closed.
-if ($userCfg -and $MachineCfg.Count -gt 0) {
-    Write-Host ''
-    Write-Host (L 'Writing the settings Steam Cloud does not carry:' `
-                  'Пишу настройки, которые не возит Steam Cloud:')
-    Write-Payload $MachineCfg $userCfg 'machine'
-    Warn 'CS2 must be closed for these: it rewrites this file when it exits.' `
-         'Для них CS2 должна быть закрыта: при выходе она перезаписывает этот файл.'
-}
-
-if ($Video) {
-    if (-not $userCfg) { Warn 'No CS2 userdata folder. Log into Steam, run CS2 once, retry.' `
-                              'Нет папки userdata для CS2. Войди в Steam, запусти игру один раз и повтори.' }
-    elseif ($VideoCfg.Count -eq 0) { Warn 'This pack has no video settings.' `
-                                          'В этом наборе нет настроек видео.' }
-    else {
-        Write-Host ''
-        Write-Host (L 'Writing video settings:' 'Пишу настройки видео:')
-        Write-Payload (Get-VideoPayload $VideoCfg $userCfg) $userCfg 'video'
-        Info 'Card, monitor and refresh rate are left as this PC had them, so CS2 takes the file as its own instead of re-detecting over it.' `
-             'Видеокарту, монитор и частоту обновления оставил как на этом ПК: CS2 примет файл за свой и не станет определять железо заново.'
-        Info 'The resolution is in the launch options too: those are read before the game opens this file at all.' `
-             'Разрешение продублировал и в параметрах запуска — игра читает их раньше, чем откроет этот файл.'
-    }
-} else {
-    Info ''
-    Info 'Video settings not touched. Pass -Video to apply them.' `
-         'Настройки видео не тронуты. Передай -Video, чтобы применить и их.'
-}
-
-if ($Convars) {
-    if (-not $userCfg) { Warn 'No CS2 userdata folder. Cannot restore the cloud backup.' `
-                              'Нет папки userdata для CS2. Вернуть копию из облака не получится.' }
-    else {
-        Write-Host ''
-        Write-Host (L 'Restoring Steam Cloud settings:' 'Возвращаю настройки из Steam Cloud:')
-        Warn 'Close CS2 AND Steam first, or Steam overwrites these when it exits.' `
-             'Сначала закрой и CS2, и Steam: иначе Steam перезапишет их при выходе.'
-        Write-Payload $CloudCfg $userCfg 'cloud'
     }
 }
-
-if (Test-Path $Backup) {
-    Write-Host ''
-    Info "$(L 'Original files of this PC' 'Исходные файлы этого ПК'): $Backup"
-    Info 'Run with -Undo to put them back.' 'Запусти с -Undo, чтобы вернуть их на место.'
-}
-
-Write-Host ''
-Write-Host ((L '=== BY HAND ' '=== ВРУЧНУЮ ').PadRight(60, '=')) -ForegroundColor Cyan
-if ($LaunchOptions -ne '') {
-    Write-Host ''
-    Write-Host (L 'Launch options (Steam > CS2 > Properties > General):' `
-                  'Параметры запуска (Steam > CS2 > Свойства > Общие):') -ForegroundColor White
-    Write-Host ''
-    Write-Host "   $LaunchOptions" -ForegroundColor Yellow
-    try {
-        Set-Clipboard -Value $LaunchOptions
-        Write-Host ''
-        Info 'Copied to your clipboard. Just paste.' 'Скопировано в буфер обмена. Просто вставь.'
-    } catch { }
-}
-Write-Host ''
-Write-Host (L 'If you play a stretched 4:3 resolution, set GPU scaling too:' `
-              'Если играешь в растянутом 4:3, настрой ещё и масштабирование:') -ForegroundColor White
-Write-Host (L 'NVIDIA Control Panel > Adjust desktop size and position > Full-screen,' `
-              'Панель управления NVIDIA > Регулировка размера и положения > Во весь экран,') -ForegroundColor White
-Write-Host (L 'scaling on GPU, tick Override the scaling mode set by games.' `
-              'масштабирование на GPU, галочка «Замещение режима масштабирования, заданного играми».') -ForegroundColor White
-Write-Host ''
-Write-Host (L 'Then start CS2 and check your crosshair, sensitivity and binds.' `
-              'Дальше запусти CS2 и проверь прицел, чувствительность и бинды.') -ForegroundColor White
-Write-Host ''
-Write-Host (L "Made with cs2-config ${PackTool}: $ToolUrl" "Собрано утилитой cs2-config ${PackTool}: $ToolUrl") -ForegroundColor DarkGray
-Write-Host ''
-'@
-
-$applyPs = $restoreHead + $payload + "`r`n" + $restoreConsts + $restoreBody
-
-$errors = $null
-[void][System.Management.Automation.Language.Parser]::ParseInput($applyPs, [ref]$null, [ref]$errors)
-if ($errors -and $errors.Count -gt 0) {
-    Write-Host 'FAIL the generated apply-config has syntax errors:' -ForegroundColor Red
-    $errors | ForEach-Object { Write-Host "     $($_.Message) (line $($_.Extent.StartLineNumber))" -ForegroundColor Red }
-    exit 1
-}
-
-# One file, not two. The PowerShell rides below a marker inside the .cmd, where cmd
-# never reads, and the launcher unpacks it to TEMP before running it: the same trick
-# this file uses on itself. A loose .ps1 is only a thing to lose, to leave behind on
-# someone else's PC, or to open in Notepad by accident.
-#
-# Its marker is ::CFG::, deliberately different from the one this file carries for
-# itself, so neither extractor can ever find the other's payload. For that same reason
-# this file's own marker is never spelled out again anywhere below it: extraction takes
-# the LAST match, so a second mention would silently become the marker.
-$applyCmdHead = @'
-@echo off
-rem  Double-click this to apply the settings in this folder.
-rem
-rem  Generated by cs2-config. Everything is in this one file: the PowerShell below
-rem  the marker is plain text, and cmd stops reading at the exit above it.
-
-setlocal
-title CS2 config
-
-rem  Cyrillic needs a console codepage that can render it; a stock Russian console is 866.
-rem  Switch to UTF-8 and put the old one back on the way out, so running this from an
-rem  existing terminal leaves no trace.
-set "CP="
-for /f "tokens=2 delims=:" %%c in ('chcp') do set "CP=%%c"
-chcp 65001 >nul
-
-set "PS1=%TEMP%\apply-config.ps1"
-if exist "%PS1%" del "%PS1%"
-
-rem  Via an environment variable, so an apostrophe in the path cannot break the string.
-set "SELF=%~f0"
-powershell -NoProfile -Command "$m='::'+'CFG::'; $t=[IO.File]::ReadAllText($env:SELF,[Text.Encoding]::UTF8); $i=$t.LastIndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:TEMP+'\apply-config.ps1', $t.Substring($i+$m.Length), (New-Object Text.UTF8Encoding($true)))"
-if not exist "%PS1%" goto broken
-
-rem  Switches go straight through. With none the script shows its own menu: that lives on
-rem  the PowerShell side, which already knows the display language, while cmd would need a
-rem  second way to work it out.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
-
-rem  Leave nothing behind on a machine you borrowed.
-if exist "%PS1%" del "%PS1%"
-echo.
-pause
-call :restorecp
-exit /b 0
-
-:broken
-rem  Both languages at once, no detection. This runs when the file itself is damaged,
-rem  which is the worst possible place for one more thing that can go wrong.
-echo.
-echo Could not unpack the script from this file.
-echo Re-download it: some editors and chat apps corrupt .cmd files.
-echo.
-echo If PowerShell is blocked here, copy cfg\*.cfg into the game folder by hand,
-echo or paste apply-config-using-console.txt into the CS2 console instead.
-echo.
-echo Не удалось распаковать скрипт из этого файла.
-echo Скачай его заново: некоторые редакторы и мессенджеры портят .cmd.
-echo.
-echo Если тут закрыт PowerShell, скопируй cfg\*.cfg в папку игры вручную
-echo или вставь содержимое apply-config-using-console.txt в консоль CS2.
-echo.
-pause
-call :restorecp
-exit /b 1
-
-:restorecp
-if defined CP chcp %CP% >nul
-goto :eof
-
-::CFG::
-'@
-
-$applyCmdText = ($applyCmdHead -replace "`r?`n", "`r`n") + $applyPs
-$applyMarker  = '::' + 'CFG::'
-$markerHits   = ([regex]::Matches($applyCmdText, [regex]::Escape($applyMarker))).Count
-if ($markerHits -ne 1) {
-    Die "One of your configs contains the text $applyMarker, which the launcher uses as its own marker. Remove it and run this again." `
-        "В одном из твоих конфигов есть текст $applyMarker — этой меткой лаунчер отделяет свой скрипт. Убери её и запусти снова."
-}
-
-$applyPath = Join-Path $OutDir 'apply-config.cmd'
-[IO.File]::WriteAllText($applyPath, $applyCmdText, $UTF8)
-$applyKb = [math]::Round((Get-Item $applyPath).Length / 1KB, 1)
-Ok "apply-config.cmd  $applyKb KB, parses clean" `
-   "apply-config.cmd  $applyKb КБ, синтаксис в порядке"
-
-# update-config.cmd is this launcher, copied in. Started from inside a pack it rebuilds
-# that pack, so updating never means hunting down the original download again.
-#
-# Skipped when it would land on the file currently running: cmd re-reads a batch file
-# after each command returns, so overwriting it mid-run wrecks the rest of the run.
-$updatePath = Join-Path $OutDir 'update-config.cmd'
-if ($env:SELF -and (Test-Path $env:SELF)) {
-    $sameFile = $false
-    try { $sameFile = ([IO.Path]::GetFullPath($env:SELF) -eq [IO.Path]::GetFullPath($updatePath)) } catch { }
-    if ($sameFile) {
-        Ok 'update-config.cmd  already in place' 'update-config.cmd  уже на месте'
-    } else {
-        Copy-Item $env:SELF $updatePath -Force
-        Ok 'update-config.cmd'
+function Start-ConfigTool($Mode,$Root,$Embedded) {
+    $script:Root=[IO.Path]::GetFullPath($Root)
+    $script:Pack=Read-Pack $script:Root $Embedded
+    $script:ExitRequested=$false
+    if (-not $script:Pack.profiles.Count -and (Test-Path -LiteralPath (Join-Path $Root 'cfg'))) {
+        Show-Header 'Name your existing profile'
+        $name=Read-ProfileName; if (-not $name) { return }
+        $script:Pack.name=Split-Path -Leaf $script:Root.TrimEnd('\')
+        $script:Pack.profiles=@(Import-LegacyProfile $Root $name)
+        Export-Pack $script:Pack $Root
     }
-} else {
-    Warn 'Could not copy myself in as update-config.cmd.' `
-         'Не смог положить себя в набор как update-config.cmd.'
-    Info 'Updating means running this setup again by hand.' `
-         'Обновлять придётся, запуская этот скрипт вручную.'
-}
-
-# The one-line install downloads apply-config.cmd straight from GitHub, so the bytes
-# stored in the repository are the bytes that run. cmd.exe garbles a batch file whose
-# lines end in LF alone, and git normalises CRLF to LF on commit unless told otherwise.
-# eol=crlf would not do: that only affects checkout, and the raw download never checks out.
-$gitAttrs = @'
-# apply-config.cmd is downloaded raw by the one-line install, so what is stored here is
-# what runs. cmd.exe misparses a batch file with LF-only line endings, and git would
-# normalise them away on commit without this line.
-*.cmd -text
-'@
-[IO.File]::WriteAllText((Join-Path $OutDir '.gitattributes'), ($gitAttrs -replace "`r?`n", "`r`n") + "`r`n", $UTF8)
-Ok '.gitattributes' '.gitattributes'
-
-# ==================================================================================
-#  Generate apply-config-using-console.txt
-# ==================================================================================
-
-# One cfg line is one command. Never split a line: semicolons also appear inside quoted
-# bind bodies, and splitting there would corrupt them.
-function Get-ConsoleCommands($cfgPath) {
-    $cmds = New-Object System.Collections.Generic.List[string]
-    foreach ($line in (Get-Content $cfgPath)) {
-        $t = $line.Trim()
-        if ($t -eq '' -or $t.StartsWith('//')) { continue }
-        $t = $t.TrimEnd(';', ' ')
-        if ($t -ne '') { $cmds.Add($t) }
-    }
-    return $cmds
-}
-
-# A config another one binds a key to, like bind f1 "exec training", is meant to run when
-# that key is pressed, not now. training.cfg on its own would flip sv_cheats and kick the
-# bots on whatever server you happen to be on, so those files stay out of the paste.
-function Get-OnDemandCfgs($cfgs) {
-    $names = New-Object System.Collections.Generic.List[string]
-    foreach ($f in $cfgs) {
-        foreach ($line in (Get-Content $f.FullName)) {
-            foreach ($m in [regex]::Matches($line, '(?i)bind\s+"?[^"\s]+"?\s+"[^"]*\bexec\s+([\w.-]+)')) {
-                $n = $m.Groups[1].Value.ToLower()
-                if (-not $n.EndsWith('.cfg')) { $n = "$n.cfg" }
-                if (-not $names.Contains($n)) { $names.Add($n) }
+    :MenuLoop while (-not $script:ExitRequested) {
+        try {
+            switch ($Mode) {
+                'apply' { Invoke-ApplyScreen }
+                'create' { Invoke-SaveScreen $false }
+                'update' { Invoke-SaveScreen $true }
+                default {
+                    Show-Header 'Choose option below:'
+                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'; Write-Host ''
+                    switch (Read-Choice @(0,1,2,3)) {
+                        0 { $script:ExitRequested=$true }
+                        1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }
+                    }
+                    continue MenuLoop
+                }
             }
-        }
+        } catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
+        $Mode='menu'
     }
-    return $names
 }
-
-# The file is opened, selected whole, copied and pasted into the console once. So it holds
-# one line of commands and nothing else: a heading or a note would be pasted along with
-# them. What the file cannot say, the pack README says instead.
-#
-# autoexec.cfg stays out as well. It only chains to the other configs with exec and calls
-# host_writeconfig, and neither means anything on a PC that does not have those files.
-$onDemand    = Get-OnDemandCfgs $packedCfgs
-$consoleCmds = New-Object System.Collections.Generic.List[string]
-$consoleLeft = New-Object System.Collections.Generic.List[string]
-
-# Main config first. If the console does turn out to have a length limit, what falls off
-# the end is then the least important thing in the file.
-$ordered = @($packedCfgs | Where-Object { $Main -and $_.Name -eq $Main }) +
-           @($packedCfgs | Where-Object { -not ($Main -and $_.Name -eq $Main) })
-foreach ($f in $ordered) {
-    $lower = $f.Name.ToLower()
-    if ($lower -eq 'autoexec.cfg') { continue }
-    if ($onDemand.Contains($lower)) { $consoleLeft.Add($f.Name); continue }
-    foreach ($c in (Get-ConsoleCommands $f.FullName)) { $consoleCmds.Add($c) }
-}
-
-$consoleLine = ($consoleCmds -join '; ')
-# No BOM. The file exists to be copied, and an editor that carries the BOM into the
-# clipboard would glue it onto the first command.
-[IO.File]::WriteAllText((Join-Path $OutDir 'apply-config-using-console.txt'), $consoleLine, $UTF8)
-Ok "apply-config-using-console.txt  $($consoleCmds.Count) commands, $($consoleLine.Length) chars" `
-   "apply-config-using-console.txt  команд: $($consoleCmds.Count), символов: $($consoleLine.Length)"
-if ($consoleLeft.Count -gt 0) {
-    Info "not in it: $($consoleLeft -join ', ') — run from a key, not on arrival" `
-         "не вошли: $($consoleLeft -join ', ') — они запускаются с клавиши, а не при старте"
-}
-
-# ==================================================================================
-#  Generate the pack instructions, English and Russian
-#  Markdown, because the pack is meant to end up on GitHub, where README.md becomes the
-#  landing page. That decides the formatting: single newlines collapse when rendered, so
-#  anything that has to keep its line breaks - listings, commands - goes in a fence.
-# ==================================================================================
-
-# The blob page, not the raw URL: GitHub serves a .cmd as text/plain with no attachment
-# header, so a raw link opens the script in the browser instead of downloading it. The
-# blob page has a download button. Without -RepoUrl nobody knows the repo yet, so the
-# placeholders stay in and the person filling them in can see where they go.
-$downloadUrl = 'https://github.com/<you>/<repo>/blob/main/apply-config.cmd'
-if ($RepoUrl) {
-    $downloadUrl = $RepoUrl.TrimEnd('/') + '/blob/main/apply-config.cmd'
-} elseif (Test-Path (Join-Path $OutDir 'README.md')) {
-    # update-config.cmd knows nothing about where the pack was published, so without this
-    # every rebuild by hand would put the placeholders back into a README that already had
-    # a working link. Recover it from the README standing here.
-    $prev = [regex]::Match([IO.File]::ReadAllText((Join-Path $OutDir 'README.md')),
-                           'https://github\.com/[^\s)]+/blob/main/apply-config\.cmd')
-    if ($prev.Success -and $prev.Value -notmatch '[<>]') { $downloadUrl = $prev.Value }
-}
-
-# PadRight alone is not enough: cs2_user_convars_0_slot0.vcfg is longer than the column,
-# and its description would end up glued to the file name.
-function Col($name, $desc) {
-    if ($desc -eq '') { return $name }
-    $gap = 33 - $name.Length
-    if ($gap -lt 2) { $gap = 2 }
-    return $name + (' ' * $gap) + $desc
-}
-
-$fileLinesEn = New-Object System.Collections.Generic.List[string]
-$fileLinesRu = New-Object System.Collections.Generic.List[string]
-foreach ($f in $packedCfgs) {
-    $en = ''
-    $ru = ''
-    if ($f.Name -eq 'autoexec.cfg')   { $en = 'Runs automatically on startup'; $ru = 'Запускается сам при старте игры' }
-    if ($f.Name -eq 'crosshair.cfg')  { $en = 'Your crosshair';                $ru = 'Твой прицел' }
-    if ($Main -and $f.Name -eq $Main) { $en = 'Your main config';              $ru = 'Твой главный конфиг' }
-    $fileLinesEn.Add((Col "cfg\$($f.Name)" $en))
-    $fileLinesRu.Add((Col "cfg\$($f.Name)" $ru))
-}
-if ($hasVideo) {
-    $fileLinesEn.Add((Col 'video\cs2_video.txt' 'Resolution and quality'))
-    $fileLinesRu.Add((Col 'video\cs2_video.txt' 'Разрешение и качество картинки'))
-}
-if ($machineCount -gt 0) {
-    $fileLinesEn.Add((Col 'machine\cs2_machine_convars.vcfg' 'Radar, fov, volumes: what Steam Cloud does not carry'))
-    $fileLinesRu.Add((Col 'machine\cs2_machine_convars.vcfg' 'Радар, fov, громкости: то, что не возит Steam Cloud'))
-}
-foreach ($c in $cloudFiles) {
-    $fileLinesEn.Add((Col "cloud-backup\$c" 'What Steam Cloud normally brings'))
-    $fileLinesRu.Add((Col "cloud-backup\$c" 'То, что обычно приносит Steam Cloud'))
-}
-$filesBlockEn = ($fileLinesEn -join "`r`n")
-$filesBlockRu = ($fileLinesRu -join "`r`n")
-
-$tmplEn = @'
-# CS2 config
-
-Packed by [cs2-config]({{TOOLURL}}) {{TOOLVER}}.
-
-## Installing the config on another PC
-
-Any one of these three. Take the first that works on that PC — they are alternatives, not
-steps.
-
-#### Installation file
-Download [apply-config.cmd]({{DOWNLOAD}}) and launch it.
-
-Close CS2 before you do. A running game holds its own copy of the video settings and
-writes them back over yours on the way out.
-
-#### Copy configs manually
-Copy the files from `cfg\` into:
-
-```
-...\steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg\
-```
-
-Then restart CS2. `autoexec.cfg` runs on startup and pulls in the rest. If the game is
-already open, `exec autoexec` in the console does the same thing once.
-
-#### Use CS2 console
-Open `apply-config-using-console.txt` and copy everything, then paste into the CS2 console.
-
-For a PC where you cannot write files at all. Configs and crosshair only.
-
-## Launch options
-
-Steam > CS2 > Properties > General.
-
-Portable version, safe on unknown hardware:
-
-```
-{{LAUNCHPORTABLE}}
-```
-
-Your full version, for home:
-
-```
-{{LAUNCHFULL}}
-```
-
-## What is in here
-
-```
-apply-config.cmd                 Applies the settings; your configs are embedded in it
-apply-config-using-console.txt   One line to paste into the CS2 console
-update-config.cmd                Updates itself, then rebuilds this folder
-.gitattributes                   Keeps the line endings that a downloaded .cmd needs
-{{FILES}}
-```
-
-The crosshair is applied as convars, so there is nothing to paste. The share code, if you
-want it anyway:
-
-```
-{{CROSSHAIR}}
-```
-
-`cloud-backup\` is a copy of what Steam Cloud normally delivers. You usually never need
-it: logging into Steam brings your sensitivity, crosshair and binds down by itself.
-'@
-
-$tmplRu = @'
-# Конфиг CS2
-
-Собран утилитой [cs2-config]({{TOOLURL}}) {{TOOLVER}}.
-
-## Установка конфига на другом компьютере
-
-Любой из трёх способов. Бери первый, который сработает на этом ПК: это варианты, а не
-шаги.
-
-#### Файл установки
-Скачай [apply-config.cmd]({{DOWNLOAD}}) и запусти его.
-
-Сначала закрой CS2. Запущенная игра держит свои настройки видео в памяти и при выходе
-перезапишет ими твои.
-
-#### Скопировать конфиги вручную
-Скопируй файлы из `cfg\` в папку:
-
-```
-...\steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg\
-```
-
-Потом перезапусти CS2: `autoexec.cfg` выполняется при старте и подтягивает остальное.
-Если игра уже открыта, то же самое сделает `exec autoexec` в консоли.
-
-#### Через консоль CS2
-Открой `apply-config-using-console.txt`, скопируй всё и вставь в консоль CS2.
-
-Для ПК, где записывать файлы нельзя вообще. Только конфиги и прицел.
-
-## Параметры запуска
-
-Steam > CS2 > «Свойства» > «Общие».
-
-Переносимый вариант, безопасный на незнакомом железе:
-
-```
-{{LAUNCHPORTABLE}}
-```
-
-Твой полный вариант, домашний:
-
-```
-{{LAUNCHFULL}}
-```
-
-## Что лежит внутри
-
-```
-apply-config.cmd                 Применяет настройки; конфиги лежат внутри него же
-apply-config-using-console.txt   Одна строка для вставки в консоль CS2
-update-config.cmd                Обновляется сам и пересобирает эту папку
-.gitattributes                   Хранит переводы строк, нужные скачанному .cmd
-{{FILES}}
-```
-
-Прицел применяется через консольные переменные, вставлять ничего не нужно. Код обмена,
-если он всё же нужен:
-
-```
-{{CROSSHAIR}}
-```
-
-`cloud-backup\` — копия того, что обычно приносит Steam Cloud. Обычно она не нужна:
-вход в Steam сам подтянет чувствительность, прицел и бинды.
-'@
-
-function Expand-Template($t, $files, $none) {
-    $launchFull = $launchRaw
-    if (-not $launchFull) { $launchFull = $none }
-    $lp = $launchPortable
-    if ($lp -eq '') { $lp = $none }
-    $xh = $shareCode
-    if (-not $xh) { $xh = $none }
-    return $t.Replace('{{TOOLURL}}', $TOOL_URL).
-              Replace('{{TOOLVER}}', $TOOL_VERSION).
-              Replace('{{DOWNLOAD}}', $downloadUrl).
-              Replace('{{LAUNCHPORTABLE}}', $lp).
-              Replace('{{LAUNCHFULL}}', $launchFull).
-              Replace('{{CROSSHAIR}}', $xh).
-              Replace('{{FILES}}', $files)
-}
-
-# CRLF and a BOM so Notepad on a stock Windows box renders them correctly.
-# Names this tool used to write. A pack built by an older version keeps them forever
-# otherwise, and two apply scripts side by side is worse than none.
-foreach ($old in @('cs2-config-apply.cmd', 'cs2-config-apply.ps1', 'apply-config.ps1',
-                   'console-paste.txt', 'README.txt', 'README.ru.txt')) {
-    $stale = Join-Path $OutDir $old
-    if (Test-Path $stale) { Remove-Item $stale -Force }
-}
-$enTxt = (Expand-Template $tmplEn $filesBlockEn '(none)') -replace "`r?`n", "`r`n"
-$ruTxt = (Expand-Template $tmplRu $filesBlockRu '(нет)')  -replace "`r?`n", "`r`n"
-# No BOM: markdown is read by GitHub far more often than by Notepad, and modern Notepad
-# detects UTF-8 on its own anyway.
-[IO.File]::WriteAllText((Join-Path $OutDir 'README.md'),    $enTxt, $UTF8)
-[IO.File]::WriteAllText((Join-Path $OutDir 'README.ru.md'), $ruTxt, $UTF8)
-Ok 'README.md, README.ru.md' 'README.md, README.ru.md — инструкции'
-# ==================================================================================
-#  Summary
-# ==================================================================================
-
-Head '=== done ===================================================' `
-     '=== готово ================================================='
-Write-Host ''
-Info "Pack written to: $OutDir" "Набор собран здесь: $OutDir"
-Write-Host ''
-# Just the string worth pasting. The per-flag reasoning lives in the pack README, which
-# is where someone actually goes looking for it. Said as "on the other PC" because that
-# is where it matters: on this one they are already set, and this line is the trimmed
-# version, so pasting it here would quietly drop flags.
-if ($launchPortable -ne '') {
-    Write-Host (L 'Set these on the other PC (Steam > CS2 > Properties > General):' `
-                  'Поставь их на другом ПК (Steam > CS2 > «Свойства» > «Общие»):') -ForegroundColor White
-    Write-Host $launchPortable -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host (L 'The resolution is in there twice over: the game reads these before it opens a video config at all.' `
-                  'Разрешение тут продублировано: игра читает эти параметры раньше, чем откроет файл с настройками видео.') -ForegroundColor DarkGray
-    Write-Host ''
-}
-Write-Host (L 'Next:' 'Дальше:') -ForegroundColor White
-Info '1. Copy the whole folder to a USB stick. It is tiny, and apply-config-using-console.txt' `
-     '1. Скопируй всю папку на флешку. Она крошечная, а apply-config-using-console.txt —'
-Info '   is the fallback you want when a venue PC blocks PowerShell.' `
-     '   тот самый запасной вариант, когда на площадке закрыт PowerShell.'
-Info '2. On the other PC, double-click apply-config.cmd and pick an option.' `
-     '2. На другом ПК кликни по apply-config.cmd и выбери пункт.'
-Info '3. Or put the contents of the folder on GitHub, so it can be downloaded anywhere.' `
-     '3. Или выложи содержимое папки на GitHub, чтобы скачать её откуда угодно.'
-Info '4. Settings changed later? Run update-config.cmd from inside that folder.' `
-     '4. Поменяешь настройки — запусти update-config.cmd из этой же папки.'
-Write-Host ''
-
-# Hand the path to the launcher, which opens the folder once Enter is pressed. Doing it
-# from here instead would bury Explorer under the console window still waiting on pause.
-try {
-    [IO.File]::WriteAllText((Join-Path $env:TEMP 'cs2-config-outdir.txt'), $OutDir, $UTF8)
-} catch { }
+# END CORE
+$script:CoreSource = [IO.File]::ReadAllText($PSCommandPath)
+$script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(.*?)^# END CORE\r?$').Groups[1].Value.Trim()
+try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT 'eyJzY2hlbWFWZXJzaW9uIjoxLCJuYW1lIjoiY3MyLWNvbmZpZyIsInByb2ZpbGVzIjpbXX0=' }
+catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; [void](Read-Host 'Press Enter to close'); exit 1 }
