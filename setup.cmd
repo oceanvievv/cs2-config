@@ -7,24 +7,17 @@ chcp 65001 >nul
 set "CS2_LAUNCHER=%~f0"
 set "CS2_PACK_ROOT=%~dp0"
 set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
-powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
-if errorlevel 1 goto broken
-powershell -NoProfile -STA -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+powershell -NoProfile -STA -ExecutionPolicy Bypass -Command "& { param([ValidateSet('menu','create','update','apply')][string]$Mode='create') $ErrorActionPreference='Stop'; try { $t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){throw 'Script not found'}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true))) } catch { Write-Host 'This file could not be opened. Download it again or use the console instructions.'; [void](Read-Host 'Press Enter to close'); exit 1 }; & $env:CS2_RUN_FILE -Mode $Mode }" %*
 set "CS2_RESULT=%ERRORLEVEL%"
 if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
 if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
 exit /b %CS2_RESULT%
-:broken
-echo This file could not be opened. Download it again or use the console instructions.
-pause
-if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
-exit /b 1
 ::PS1::
 param([ValidateSet('menu','create','update','apply')][string]$Mode = 'create')
 $ErrorActionPreference = 'Stop'
 # BEGIN CORE
 # Windows PowerShell 5.1. Profiles are data, never executable PowerShell.
-$TOOL_VERSION = '2.0.6'
+$TOOL_VERSION = '2.0.7'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 function ConvertTo-Map($Value) {
     if ($null -eq $Value) { return $null }
@@ -502,18 +495,11 @@ chcp 65001 >nul
 set "CS2_LAUNCHER=%~f0"
 set "CS2_PACK_ROOT=%~dp0"
 set "CS2_RUN_FILE=%TEMP%\cs2-config-%RANDOM%-%RANDOM%.ps1"
-powershell -NoProfile -Command "$t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){exit 1}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true)))"
-if errorlevel 1 goto broken
-powershell -NoProfile -STA -ExecutionPolicy Bypass -File "%CS2_RUN_FILE%" %*
+powershell -NoProfile -STA -ExecutionPolicy Bypass -Command "& { param([ValidateSet('menu','create','update','apply')][string]$Mode='__MODE__') $ErrorActionPreference='Stop'; try { $t=[IO.File]::ReadAllText($env:CS2_LAUNCHER); $m=[Environment]::NewLine+'::'+'PS1'+'::'+[Environment]::NewLine; $i=$t.IndexOf($m); if($i -lt 0){throw 'Script not found'}; [IO.File]::WriteAllText($env:CS2_RUN_FILE,$t.Substring($i+$m.Length),(New-Object Text.UTF8Encoding($true))) } catch { Write-Host 'This file could not be opened. Download it again or use the console instructions.'; [void](Read-Host 'Press Enter to close'); exit 1 }; & $env:CS2_RUN_FILE -Mode $Mode }" %*
 set "CS2_RESULT=%ERRORLEVEL%"
 if exist "%CS2_RUN_FILE%" del "%CS2_RUN_FILE%"
 if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
 exit /b %CS2_RESULT%
-:broken
-echo This file could not be opened. Download it again or use the console instructions.
-pause
-if defined CS2_OLD_CP chcp %CS2_OLD_CP% >nul
-exit /b 1
 ::PS1::
 '@
     $entry = @'
@@ -526,7 +512,7 @@ $script:CoreSource = [regex]::Match($script:CoreSource,'(?ms)^# BEGIN CORE\r?\n(
 try { Start-ConfigTool $Mode $env:CS2_PACK_ROOT '__PAYLOAD__' }
 catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; [void](Read-Host 'Press Enter to close'); exit 1 }
 '@
-    $text = $header + "`n" + $entry.Replace('__MODE__',$Mode) + "`n# BEGIN CORE`n" + $Core.Trim() + "`n# END CORE`n" + $tail.Replace('__PAYLOAD__',$encoded)
+    $text = $header.Replace('__MODE__',$Mode) + "`n" + $entry.Replace('__MODE__',$Mode) + "`n# BEGIN CORE`n" + $Core.Trim() + "`n# END CORE`n" + $tail.Replace('__PAYLOAD__',$encoded)
     return ($text -replace "`r?`n", "`r`n") + "`r`n"
 }
 function Get-ConsoleCommands($Profile) {
@@ -712,6 +698,7 @@ function Read-Choice([int[]]$Allowed) {
     while ($true) {
         Write-Host ''
         $value=Read-Host 'Enter an option'
+        Write-Host ''
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
         Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow

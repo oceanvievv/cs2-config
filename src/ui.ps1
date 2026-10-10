@@ -97,6 +97,7 @@ function Read-Choice([int[]]$Allowed) {
     while ($true) {
         Write-Host ''
         $value=Read-Host 'Enter an option'
+        Write-Host ''
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
         Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow

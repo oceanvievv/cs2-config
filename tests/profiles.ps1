@@ -144,6 +144,7 @@ try {
             Assert ($launchIndex -ge 0 -and $lines[$launchIndex+1] -eq '' -and $lines[$launchIndex+3] -eq '') 'Launch options spacing is missing.'
             $promptIndex=$lines.IndexOf('INPUT: Enter an option')
             Assert ($promptIndex -gt 0 -and $lines[$promptIndex-1] -eq '') 'Input prompt or its blank line is incorrect.'
+            Assert ($lines[$promptIndex+1] -eq '') 'No blank line separates input from the following output.'
             if ($case.Launch) {
                 $copyIndex=$lines.IndexOf('Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.')
                 Assert ($copyIndex -ge 0 -and $colors[$copyIndex] -eq '') 'Clipboard success text or color is incorrect.'
@@ -151,6 +152,10 @@ try {
             $expected=if ($case.Partial) { 'Profile '+$profile.name+' partially applied' } else { 'Profile '+$profile.name+' successfully applied' }
             Assert ($lines.Contains($expected)) 'Result heading does not describe the outcome.'
         }
+        $lines.Clear(); $answers.Enqueue('invalid'); $answers.Enqueue('1')
+        Assert ((Read-Choice @(1)) -eq 1) 'Invalid input did not allow retry.'
+        $errorIndex=$lines.IndexOf('Enter one of the listed numbers.')
+        Assert ($errorIndex -gt 0 -and $lines[$errorIndex-1] -eq '') 'Input error has no blank line above it.'
     }
     $choices=New-Object 'Collections.Generic.Queue[string]'; $choices.Enqueue('');$choices.Enqueue('9');$choices.Enqueue('1')
     function Read-Host { param($Prompt); return $choices.Dequeue() }
