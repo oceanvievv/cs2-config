@@ -1,6 +1,19 @@
+function Initialize-Terminal {
+    if ([Console]::IsOutputRedirected -or [Console]::IsInputRedirected) { return }
+    try { $Host.UI.RawUI.WindowTitle = 'CS2 CONFIG - ' + $script:Pack.name } catch { }
+    try {
+        $ui = $Host.UI.RawUI
+        $window = $ui.WindowSize
+        $height = [Math]::Min([int][Math]::Ceiling($window.Height * 2.5), $ui.MaxPhysicalWindowSize.Height)
+        if ($height -le $window.Height) { return }
+        $buffer = $ui.BufferSize
+        if ($buffer.Height -lt $height) { $buffer.Height = $height; $ui.BufferSize = $buffer }
+        $window.Height = $height
+        $ui.WindowSize = $window
+    } catch { } # Some terminal hosts manage their own window dimensions.
+}
 function Show-Header($Title) {
-    Write-Host ''; Write-Host 'CS2 CONFIG' -ForegroundColor Cyan
-    Write-Host ('Config name: ' + $script:Pack.name)
+    if (-not [Console]::IsOutputRedirected) { try { Clear-Host } catch { } }
     Write-Host ''; Write-Host $Title -ForegroundColor White; Write-Host ''
 }
 function Read-Choice([int[]]$Allowed) {
@@ -13,8 +26,8 @@ function Read-Choice([int[]]$Allowed) {
 }
 function Wait-Back { Write-Host ''; [void](Read-Host 'Press Enter to go back') }
 function Select-Profile($Purpose) {
-    if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
     Show-Header ('Choose a profile to ' + $Purpose)
+    if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
     for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-Host "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
     Write-Host '  [0] Back'; Write-Host ''
     $index=Read-Choice (0..$script:Pack.profiles.Count)
@@ -213,6 +226,8 @@ function Invoke-SaveScreen($Update) {
             2 {
                 if ($Update) { Show-Header 'Current settings on this PC'; Show-Profile $profile; Wait-Back }
                 else {
+                    Show-Header 'Change destination'
+                    Write-Host ('Current folder: ' + $destination)
                     $path=(Read-Host 'Folder (0 to go back)').Trim().Trim('"')
                     if ($path -ne '0' -and $path) {
                         $candidate=[IO.Path]::GetFullPath($path)
@@ -248,6 +263,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
     $script:Root=[IO.Path]::GetFullPath($Root)
     $script:Pack=Read-Pack $script:Root $Embedded
     $script:ExitRequested=$false
+    Initialize-Terminal
     if (-not $script:Pack.profiles.Count -and (Test-Path -LiteralPath (Join-Path $Root 'cfg'))) {
         Show-Header 'Name your existing profile'
         $name=Read-ProfileName; if (-not $name) { return }
@@ -271,7 +287,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                     continue MenuLoop
                 }
             }
-        } catch { Write-Host ''; Write-Host $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
+        } catch { Show-Header 'Could not continue'; Write-Host $_.Exception.Message -ForegroundColor Yellow; Wait-Back }
         $Mode='menu'
     }
 }
