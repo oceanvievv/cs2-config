@@ -112,7 +112,45 @@ try {
     & {
         function Copy-LaunchOptions { return $false }
         $feedback=(Show-ClipboardResult '-novid' 6>&1 | Out-String)
-        Assert ($feedback -match 'Could not copy to clipboard' -and $feedback -match '\[3\]' -and $feedback -notmatch 'Copied to clipboard\.') 'Clipboard failure was hidden or reported as success.'
+        Assert ($feedback -match 'Could not copy launch options to clipboard' -and $feedback -match 'Use Copy launch options' -and $feedback -notmatch 'copied to clipboard\.') 'Clipboard failure was hidden or reported as success.'
+    }
+    & {
+        $lines=New-Object 'Collections.Generic.List[string]'
+        $colors=New-Object 'Collections.Generic.List[string]'
+        function Write-Host { param($Object,$ForegroundColor); $lines.Add([string]$Object); $colors.Add([string]$ForegroundColor) }
+        function Read-Host { param($Prompt); $lines.Add('INPUT: '+$Prompt); return $answers.Dequeue() }
+        function Copy-LaunchOptions { return $true }
+        $cases=@(
+            @{Partial=$false;Launch=$true;Answers=@('1','2');Action='Exit';Numbers='1,2,0'},
+            @{Partial=$true;Launch=$true;Answers=@('3','2');Action='Console alternative';Numbers='1,2,3,4,0'},
+            @{Partial=$false;Launch=$false;Answers=@('1');Action='Exit';Numbers='1,0'},
+            @{Partial=$true;Launch=$false;Answers=@('1');Action='Retry';Numbers='1,2,3,0'},
+            @{Partial=$false;Launch=$true;Answers=@('0');Action='Back';Numbers='1,2,0'}
+        )
+        foreach ($case in $cases) {
+            $lines.Clear(); $colors.Clear()
+            $answers=New-Object 'Collections.Generic.Queue[string]'
+            foreach ($answer in $case.Answers) { $answers.Enqueue($answer) }
+            $screenProfile=Copy-Data $profile
+            if (-not $case.Launch) { $screenProfile.launchOptions='' }
+            $screenResult=@{Saved=@('Controls');Issues=@()}
+            if ($case.Partial) { $screenResult.Issues=@(@{Kind='Skipped';Setting='Audio';Reason='Test failure'}) }
+            $action=Show-ApplyResult $screenProfile (New-ApplyPlan $screenProfile $context $hardware) $screenResult
+            Assert ($action -eq $case.Action -and $answers.Count -eq 0) 'Result menu selected the wrong action.'
+            $numbers=@($lines | ForEach-Object { if ($_ -match '^  \[(\d+)\]') { $matches[1] } })
+            Assert (($numbers -join ',') -eq $case.Numbers) 'Result menu has gaps or zero is not last.'
+            Assert (($lines -join "`n") -notmatch 'Saved and checked:|^Profile:|Start CS2 to use') 'Old result text remains.'
+            $launchIndex=$lines.IndexOf('Launch options:')
+            Assert ($launchIndex -ge 0 -and $lines[$launchIndex+1] -eq '' -and $lines[$launchIndex+3] -eq '') 'Launch options spacing is missing.'
+            $promptIndex=$lines.IndexOf('INPUT: Enter an option')
+            Assert ($promptIndex -gt 0 -and $lines[$promptIndex-1] -eq '') 'Input prompt or its blank line is incorrect.'
+            if ($case.Launch) {
+                $copyIndex=$lines.IndexOf('Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.')
+                Assert ($copyIndex -ge 0 -and $colors[$copyIndex] -eq '') 'Clipboard success text or color is incorrect.'
+            }
+            $expected=if ($case.Partial) { 'Profile '+$profile.name+' partially applied' } else { 'Profile '+$profile.name+' successfully applied' }
+            Assert ($lines.Contains($expected)) 'Result heading does not describe the outcome.'
+        }
     }
     $choices=New-Object 'Collections.Generic.Queue[string]'; $choices.Enqueue('');$choices.Enqueue('9');$choices.Enqueue('1')
     function Read-Host { param($Prompt); return $choices.Dequeue() }

@@ -95,7 +95,8 @@ function Show-Header($Title, [switch]$MainMenu) {
 }
 function Read-Choice([int[]]$Allowed) {
     while ($true) {
-        $value=Read-Host 'Select an option'
+        Write-Host ''
+        $value=Read-Host 'Enter an option'
         $number=-1
         if ([int]::TryParse($value,[ref]$number) -and $number -in $Allowed) { return $number }
         Write-Host 'Enter one of the listed numbers.' -ForegroundColor Yellow
@@ -106,7 +107,7 @@ function Select-Profile($Purpose) {
     Show-Header ('Choose a profile to ' + $Purpose)
     if (-not $script:Pack.profiles.Count) { Write-Host 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
     for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-Host "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
-    Write-Host '  [0] Back'; Write-Host ''
+    Write-Host '  [0] Back'
     $index=Read-Choice (0..$script:Pack.profiles.Count)
     if ($index -eq 0) { return $null }
     return $script:Pack.profiles[$index-1]
@@ -205,8 +206,37 @@ function Show-Issues($Issues) {
     foreach ($issue in $Issues) { Write-Host ("  {0}: {1} - {2}" -f $issue.Kind,$issue.Setting,$issue.Reason) -ForegroundColor Yellow }
 }
 function Show-ClipboardResult([string]$Text) {
-    if (Copy-LaunchOptions $Text) { Write-Host 'Copied to clipboard.' -ForegroundColor Green }
-    else { Write-Host 'Could not copy to clipboard. Select [3] to retry or copy the launch options above manually.' -ForegroundColor Yellow }
+    if (Copy-LaunchOptions $Text) { Write-Host 'Launch options copied to clipboard. Paste into Steam > CS2 > Properties > General > Launch Options.' }
+    else { Write-Host 'Could not copy launch options to clipboard. Use Copy launch options to retry or copy the line above manually.' -ForegroundColor Yellow }
+}
+function Show-ApplyResult($Profile, $Plan, $Result) {
+    $failed=@($Result.Issues | Where-Object {$_.Kind -eq 'Skipped'})
+    $title=if (-not $failed.Count) { 'Profile {0} successfully applied' }
+        elseif ($Result.Saved.Count) { 'Profile {0} partially applied' }
+        else { 'Profile {0} could not be applied' }
+    Show-Header ($title -f $Profile.name)
+    Show-Issues $Result.Issues
+    if ($Result.Issues.Count) { Write-Host '' }
+    Write-Host 'Launch options:'; Write-Host ''
+    $launch=Get-EffectiveLaunchOptions $Profile $Plan
+    Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field in Steam)'})
+    Write-Host ''
+    if (@($Result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
+    if ($launch) { Show-ClipboardResult $launch }
+    $actions=@()
+    if ($failed.Count) { $actions+=@('Retry','Console alternative') }
+    if ($launch) { $actions+='Copy launch options' }
+    $actions+='Exit'
+    Write-Host ''
+    for ($i=0; $i -lt $actions.Count; $i++) { Write-Host ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
+    Write-Host '  [0] Back to main menu'
+    while ($true) {
+        $choice=Read-Choice (0..$actions.Count)
+        if ($choice -eq 0) { return 'Back' }
+        $action=$actions[$choice-1]
+        if ($action -ne 'Copy launch options') { return $action }
+        Show-ClipboardResult $launch
+    }
 }
 function Show-Console($Profile) {
     Show-Header 'Console alternative'
@@ -231,30 +261,9 @@ function Invoke-ApplyScreen {
         Write-Host "`n  [1] $label"; Write-Host '  [0] Back'
         if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
         $result=Invoke-ApplyPlan $plan
-        $failed=@($result.Issues | Where-Object {$_.Kind -eq 'Skipped'})
-        Show-Header $(if ($failed.Count) {'Profile partially saved'} else {'Profile saved for the next CS2 launch'})
-        Write-Host ('Profile: ' + $profile.name)
-        if ($result.Saved.Count) { Write-Host ('Saved and checked: ' + ($result.Saved -join ', ')) -ForegroundColor Green }
-        Show-Issues $result.Issues
-        Write-Host "`nLaunch options"
-        $launch=Get-EffectiveLaunchOptions $profile $plan
-        Write-Host $(if ($launch) {$launch} else {'(empty - clear the Launch Options field)'})
-        Write-Host 'Paste into Steam > CS2 > Properties > General > Launch Options.'
-        if (@($result.Issues | Where-Object {$_.Setting -in @('Display','Refresh Rate')}).Count) { Write-Host 'Check any display parameters in this line before pasting.' -ForegroundColor Yellow }
-        if ($launch) { Show-ClipboardResult $launch }
-        Write-Host "`nStart CS2 to use the saved settings."
-        if ($failed.Count) { Write-Host '  [1] Retry'; Write-Host '  [2] Console alternative' }
-        if ($launch) { Write-Host '  [3] Copy launch options' }
-        Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
-        $options=if ($failed.Count) {@(0,1,2,9)} else {@(0,9)}
-        if ($launch) { $options+=3 }
-        do {
-            $choice=Read-Choice $options
-            if ($choice -eq 3) { Show-ClipboardResult $launch }
-        } while ($choice -eq 3)
-        switch ($choice) {
-            0 { return }; 9 { $script:ExitRequested=$true; return }
-            2 { Show-Console $profile; return }
+        switch (Show-ApplyResult $profile $plan $result) {
+            'Back' { return }; 'Exit' { $script:ExitRequested=$true; return }
+            'Console alternative' { Show-Console $profile; return }
         }
     }
     }
@@ -335,10 +344,10 @@ function Invoke-SaveScreen($Update) {
                 Write-Host ('Profile: '+$name); Write-Host ('Folder: '+$destination)
                 Write-Host 'Open apply-config.cmd to apply a profile.'
                 Write-Host 'Open update-config.cmd to update it.'
-                Write-Host "`n  [1] Publishing instructions"; Write-Host '  [0] Back to main menu'; Write-Host '  [9] Exit'
-                switch (Read-Choice @(0,1,9)) {
+                Write-Host "`n  [1] Publishing instructions"; Write-Host '  [2] Exit'; Write-Host '  [0] Back to main menu'
+                switch (Read-Choice @(0,1,2)) {
                     1 { Show-Header 'Update your config on GitHub'; Write-Host '1. Open your config repository on GitHub.'; Write-Host '2. Choose Add file > Upload files.'; Write-Host '3. Upload the updated config folder contents.'; Write-Host '4. Choose Commit changes.'; Wait-Back }
-                    9 { $script:ExitRequested=$true }
+                    2 { $script:ExitRequested=$true }
                 }
                 return
             }
@@ -366,7 +375,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'update' { Invoke-SaveScreen $true }
                 default {
                     Show-Header '' -MainMenu
-                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'; Write-Host ''
+                    Write-Host '  [1] Apply profile'; Write-Host '  [2] Update profile'; Write-Host '  [3] Create profile'; Write-Host '  [0] Exit'
                     switch (Read-Choice @(0,1,2,3)) {
                         0 { $script:ExitRequested=$true }
                         1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }
