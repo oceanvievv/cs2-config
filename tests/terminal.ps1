@@ -83,4 +83,3 @@ public static class TerminalProbe {
 } catch {
     @{success=$false;error=$_.Exception.ToString()} | ConvertTo-Json | Set-Content -LiteralPath $ResultPath -Encoding UTF8
 } finally { if ('CS2TerminalView' -as [type]) { [CS2TerminalView]::Stop() } }
-
