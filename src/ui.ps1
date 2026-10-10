@@ -110,8 +110,8 @@ function Wait-Back { Write-TerminalText ''; [void](Read-TerminalLine 'Press Ente
 function Select-Profile($Purpose) {
     Show-Header ('Choose a profile to ' + $Purpose)
     if (-not $script:Pack.profiles.Count) { Write-TerminalText 'No profiles yet. Create a profile first.'; Wait-Back; return $null }
-    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-TerminalText "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
-    Write-TerminalText '  [0] Back'
+    for ($i=0;$i -lt $script:Pack.profiles.Count;$i++) { Write-TerminalOption "  [$($i+1)] $($script:Pack.profiles[$i].name)" }
+    Write-TerminalOption '  [0] Back'
     $index=Read-Choice (0..$script:Pack.profiles.Count)
     if ($index -eq 0) { return $null }
     return $script:Pack.profiles[$index-1]
@@ -232,8 +232,8 @@ function Show-ApplyResult($Profile, $Plan, $Result) {
     if ($launch) { $actions+='Copy launch options' }
     $actions+='Exit'
     Write-TerminalText ''
-    for ($i=0; $i -lt $actions.Count; $i++) { Write-TerminalText ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
-    Write-TerminalText '  [0] Back to main menu'
+    for ($i=0; $i -lt $actions.Count; $i++) { Write-TerminalOption ('  [{0}] {1}' -f ($i+1),$actions[$i]) }
+    Write-TerminalOption '  [0] Back to main menu'
     while ($true) {
         $choice=Read-Choice (0..$actions.Count)
         if ($choice -eq 0) { return 'Back' }
@@ -262,7 +262,7 @@ function Invoke-ApplyScreen {
         Show-Header 'Apply profile'; Show-Profile $profile
         Write-TerminalText ''; Show-Issues $plan.Video.Issues
         $label=if (@($plan.Video.Issues | Where-Object {$_.Kind -eq 'Skipped'}).Count) {'Apply available settings'} else {'Apply'}
-        Write-TerminalText "`n  [1] $label"; Write-TerminalText '  [0] Back'
+        Write-TerminalOption "`n  [1] $label"; Write-TerminalOption '  [0] Back'
         if ((Read-Choice @(0,1)) -eq 0) { continue ChooseProfile }
         $result=Invoke-ApplyPlan $plan
         switch (Show-ApplyResult $profile $plan $result) {
@@ -296,7 +296,7 @@ function Export-WithRetry($Pack,$Destination,[switch]$Rename,$PreviousProfile=$n
             Write-TerminalText ('Folder: '+$Destination)
             Write-TerminalText ''
             Write-TerminalText 'Check folder permissions and close programs using these files, then retry.'
-            Write-TerminalText "`n  [1] Retry"; Write-TerminalText '  [0] Back to main menu'
+            Write-TerminalOption "`n  [1] Retry"; Write-TerminalOption '  [0] Back to main menu'
             if ((Read-Choice @(0,1)) -eq 0) { return $false }
         }
     }
@@ -312,7 +312,7 @@ function Invoke-RenameScreen([switch]$Profile) {
     }
     Show-Header ('Rename ' + $kind)
     Write-TerminalText ('Current name: ' + $currentName)
-    Write-TerminalText ''; Write-TerminalText '  [0] Back'
+    Write-TerminalText ''; Write-TerminalOption '  [0] Back'
     while ($true) {
         Write-TerminalText ''
         $name=(Read-TerminalLine ('New ' + $kind + ' name')).Trim()
@@ -337,7 +337,7 @@ function Invoke-RenameScreen([switch]$Profile) {
             $script:Pack=$next
             Show-Header ($label + ' renamed to ' + $name)
         }
-        Write-TerminalText '  [0] Back to main menu'
+        Write-TerminalOption '  [0] Back to main menu'
         [void](Read-Choice @(0))
         return
     }
@@ -358,14 +358,14 @@ function Invoke-SaveScreen($Update) {
             Show-Header 'Review profile changes'; Write-TerminalText ('Profile: '+$name); Write-TerminalText ''
             $changes=Show-Changes $existing $profile
             if (-not $changes) { Write-TerminalText 'Profile is already up to date.'; Wait-Back; return }
-            Write-TerminalText "`n  [1] Save changes"; Write-TerminalText '  [2] View all settings'
+            Write-TerminalOption "`n  [1] Save changes"; Write-TerminalOption '  [2] View all settings'
         } else {
             Show-Header 'Review new profile'; Show-Profile $profile
             Write-TerminalText "`nSave to: $destination"
             Write-TerminalText ''
-            Write-TerminalText '  [1] Create profile'; Write-TerminalText '  [2] Change destination'
+            Write-TerminalOption '  [1] Create profile'; Write-TerminalOption '  [2] Change destination'
         }
-        Write-TerminalText '  [0] Back'
+        Write-TerminalOption '  [0] Back'
         switch (Read-Choice @(0,1,2)) {
             0 { continue ChooseSource }
             2 {
@@ -397,7 +397,7 @@ function Invoke-SaveScreen($Update) {
                 Write-TerminalText 'Open apply-config.cmd to apply a profile.'
                 Write-TerminalText ''
                 Write-TerminalText 'Open update-config.cmd to update it.'
-                Write-TerminalText "`n  [1] Publishing instructions"; Write-TerminalText '  [2] Exit'; Write-TerminalText '  [0] Back to main menu'
+                Write-TerminalOption "`n  [1] Publishing instructions"; Write-TerminalOption '  [2] Exit'; Write-TerminalOption '  [0] Back to main menu'
                 switch (Read-Choice @(0,1,2)) {
                     1 { Show-Header 'Update your config on GitHub'; Write-TerminalText '1. Open your config repository on GitHub.'; Write-TerminalText '2. Choose Add file > Upload files.'; Write-TerminalText '3. Upload the updated config folder contents.'; Write-TerminalText '4. Choose Commit changes.'; Wait-Back }
                     2 { $script:ExitRequested=$true }
@@ -430,7 +430,7 @@ function Start-ConfigTool($Mode,$Root,$Embedded) {
                 'rename-profile' { Invoke-RenameScreen -Profile }
                 default {
                     Show-Header '' -MainMenu
-                    Write-TerminalText '  [1] Apply profile'; Write-TerminalText '  [2] Update profile'; Write-TerminalText '  [3] Create profile'; Write-TerminalText '  [4] Rename config'; Write-TerminalText '  [5] Rename profile'; Write-TerminalText '  [0] Exit'
+                    Write-TerminalOption '  [1] Apply profile'; Write-TerminalOption '  [2] Update profile'; Write-TerminalOption '  [3] Create profile'; Write-TerminalOption '  [4] Rename config'; Write-TerminalOption '  [5] Rename profile'; Write-TerminalOption '  [0] Exit'
                     switch (Read-Choice @(0,1,2,3,4,5)) {
                         0 { $script:ExitRequested=$true }
                         1 { $Mode='apply' }; 2 { $Mode='update' }; 3 { $Mode='create' }

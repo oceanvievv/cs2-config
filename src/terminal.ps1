@@ -42,6 +42,7 @@ public static class CS2TerminalView {
         public Line(string text, ushort color) { Text=text; Color=color; }
     }
     static readonly List<Line> lines=new List<Line>();
+    static readonly List<Line> options=new List<Line>();
     static readonly Dictionary<string,int> positions=new Dictionary<string,int>();
     static IntPtr input, output;
     static uint originalMode;
@@ -49,6 +50,7 @@ public static class CS2TerminalView {
     static string screen="";
     static ushort normalColor;
     static bool feedback;
+    static int optionPage, optionPages=1;
     public static bool Active { get; private set; }
     public static bool Cancelled { get; private set; }
     public static int ScrollOffset { get { return offset; } }
@@ -64,7 +66,7 @@ public static class CS2TerminalView {
         if (!SetConsoleMode(input,(originalMode | 0x0098u) & ~0x0047u)) return false;
         Active=true;
         Cancelled=false; feedback=false;
-        lines.Clear(); positions.Clear(); screen=""; offset=0;
+        lines.Clear(); options.Clear(); positions.Clear(); screen=""; offset=0; optionPage=0;
         try { FitBuffer(); return true; } catch { Stop(); return false; }
     }
     public static bool HasVisibleConsole() { return IsWindowVisible(GetConsoleWindow()); }
@@ -84,6 +86,7 @@ public static class CS2TerminalView {
         screen=key ?? "";
         if (!positions.TryGetValue(screen,out offset)) offset=0;
         lines.Clear();
+        options.Clear(); optionPage=0;
         feedback=false;
     }
     public static void Add(string text, int color) {
@@ -91,9 +94,10 @@ public static class CS2TerminalView {
         foreach (string line in (text ?? "").Replace("\r","").Replace("\t","    ").Split('\n')) lines.Add(new Line(line,attributes));
         if (feedback && !String.IsNullOrWhiteSpace(text)) offset=Int32.MaxValue;
     }
-    static List<Line> Wrap(int width) {
+    public static void AddOption(string text) { options.Add(new Line((text ?? "").Trim('\r','\n'),normalColor)); }
+    static List<Line> Wrap(List<Line> source,int width) {
         var result=new List<Line>();
-        foreach (Line line in lines) {
+        foreach (Line line in source) {
             if (line.Text.Length==0) result.Add(line);
             else for (int start=0;start<line.Text.Length;start+=width)
                 result.Add(new Line(line.Text.Substring(start,Math.Min(width,line.Text.Length-start)),line.Color));
@@ -109,8 +113,15 @@ public static class CS2TerminalView {
         FitBuffer();
         int width=Console.WindowWidth, height=Console.WindowHeight;
         if (width<4 || height<5) return;
-        pageHeight=height-3; PromptRow=height-1;
-        var body=Wrap(width-1);
+        var actions=Wrap(options,width-1);
+        int actionCapacity=Math.Max(1,height-6);
+        optionPages=Math.Max(1,(actions.Count+actionCapacity-1)/actionCapacity);
+        optionPage=Math.Min(optionPage,optionPages-1);
+        int actionStart=optionPage*actionCapacity;
+        int actionCount=Math.Min(actionCapacity,actions.Count-actionStart);
+        int actionRows=actionCount+(optionPages>1 ? 1 : 0);
+        pageHeight=height-3-actionRows; PromptRow=height-1;
+        var body=Wrap(lines,width-1);
         maximum=Math.Max(0,body.Count-pageHeight);
         offset=Math.Max(0,Math.Min(offset,maximum));
         var cells=new Cell[width*height];
@@ -118,13 +129,15 @@ public static class CS2TerminalView {
         for (int y=0;y<pageHeight && offset+y<body.Count;y++) Put(cells,width,y,body[offset+y].Text,body[offset+y].Color);
         if (maximum>0) {
             string hint=String.Format("Scroll: wheel / PgUp / PgDn   {0}-{1} of {2}",offset+1,Math.Min(body.Count,offset+pageHeight),body.Count);
-            Put(cells,width,height-3,hint,(ushort)((normalColor & 0xF0) | 8));
+            Put(cells,width,pageHeight,hint,(ushort)((normalColor & 0xF0) | 8));
             int thumb=(int)((long)offset*(pageHeight-1)/maximum);
             for (int y=0;y<pageHeight;y++) {
                 cells[y*width+width-1].Character=y==thumb ? '\u2588' : '\u2502';
                 cells[y*width+width-1].Attributes=(ushort)((normalColor & 0xF0) | 8);
             }
         }
+        for (int y=0;y<actionCount;y++) Put(cells,width,pageHeight+1+y,actions[actionStart+y].Text,actions[actionStart+y].Color);
+        if (optionPages>1) Put(cells,width,height-3,String.Format("More options: Tab / Shift+Tab   {0}/{1}",optionPage+1,optionPages),normalColor);
         string prefix=(prompt ?? "")+": ";
         if (prefix.Length>width/2) prefix=prefix.Substring(0,width/2);
         int room=Math.Max(1,width-prefix.Length-1);
@@ -146,12 +159,13 @@ public static class CS2TerminalView {
             Input record=records[0];
             if (record.Type==2) {
                 if ((record.MouseFlags & 4)!=0) Scroll(-Math.Sign((short)(record.Buttons>>16))*3);
-                else if ((record.Buttons & 1)!=0 && record.Mouse.X==Console.WindowWidth-1 && maximum>0)
+                else if ((record.Buttons & 1)!=0 && record.Mouse.X==Console.WindowWidth-1 && record.Mouse.Y<pageHeight && maximum>0)
                     offset=(int)((long)Math.Max(0,Math.Min(pageHeight-1,(int)record.Mouse.Y))*maximum/Math.Max(1,pageHeight-1));
                 continue;
             }
             if (record.Type!=1 || record.KeyDown==0) continue;
             if ((record.Control & 12)!=0 && record.Key==67) { Cancelled=true; return "0"; }
+            if (record.Key==9 && optionPages>1) { optionPage=(optionPage+((record.Control & 16)!=0 ? optionPages-1 : 1))%optionPages; continue; }
             if (record.Key==13) { positions[screen]=offset; feedback=true; return value.ToString(); }
             if (((record.Control & 12)!=0 && record.Key==86) || ((record.Control & 16)!=0 && record.Key==45)) {
                 try {
@@ -197,6 +211,10 @@ function Write-TerminalText($Object='', $ForegroundColor) {
         [CS2TerminalView]::Add([string]$Object,$color)
     } elseif ($null -eq $ForegroundColor) { Write-Host $Object }
     else { Write-Host $Object -ForegroundColor $ForegroundColor }
+}
+function Write-TerminalOption([string]$Text) {
+    if ($script:TerminalViewActive) { [CS2TerminalView]::AddOption($Text) }
+    else { Write-Host $Text }
 }
 function Read-TerminalLine([string]$Prompt) {
     if ($script:TerminalViewActive) {

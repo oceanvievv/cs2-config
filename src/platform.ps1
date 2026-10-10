@@ -66,8 +66,8 @@ function Get-Context {
     if (-not $accountId) {
         if (-not $accounts.Count) { throw 'Sign in to Steam with the account you want to use, then retry.' }
         Show-Header 'Choose a Steam account'
-        for ($i=0; $i -lt $accounts.Count; $i++) { Write-TerminalText "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
-        Write-TerminalText '  [0] Back'
+        for ($i=0; $i -lt $accounts.Count; $i++) { Write-TerminalOption "  [$($i+1)] $($accounts[$i].Name) (account $($accounts[$i].Id))" }
+        Write-TerminalOption '  [0] Back'
         $index = Read-Choice (0..$accounts.Count)
         if ($index -eq 0) { return $null }
         $accountId = $accounts[$index-1].Id

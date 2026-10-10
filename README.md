@@ -26,9 +26,10 @@ There are no predefined profile names. Even a single profile requires explicit
 selection. **Back** returns one screen; **Back to main menu** returns to the main menu.
 No backup or restore workflow is created.
 
-In the standard Windows console, the input stays at the bottom of the window.
+In the standard Windows console, menu options and input stay at the bottom of the window.
 Scroll long screens with the mouse wheel or Page Up / Page Down; returning to a
 section restores its scroll position. Ctrl+V pastes text into the input.
+If the list of profiles or accounts cannot fit, Tab / Shift+Tab changes option pages.
 
 ## Apply a profile
 
